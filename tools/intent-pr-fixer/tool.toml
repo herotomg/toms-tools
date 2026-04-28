@@ -1,0 +1,6 @@
+id = "intent-pr-fixer"
+name = "Intent PR Fixer"
+description = "Install the PR Fixer Intent specialist agent for one-shot CR comment fixing."
+version = "1"
+depends = ["gh-unresolved"]
+status_check = "test -f \"$HOME/.augment/specialists/custom-toms-tools-pr-fixer.md\""
