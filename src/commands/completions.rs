@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use clap::{Args, CommandFactory, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
 
-use crate::cli::Cli;
+use crate::cli::{self, Cli};
 
 #[derive(Debug, Args)]
 #[command(args_conflicts_with_subcommands = true)]
@@ -20,7 +20,17 @@ pub struct CompletionsArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum CompletionsCommand {
+    /// Print completion script to stdout
+    Print(CompletionPrintArgs),
+
+    /// Install completion for your shell
     Install(CompletionInstallArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct CompletionPrintArgs {
+    #[arg(value_enum)]
+    pub shell: Shell,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -30,15 +40,27 @@ pub struct CompletionInstallArgs {
 }
 
 pub fn run(args: CompletionsArgs) -> Result<()> {
-    match args.command {
-        Some(CompletionsCommand::Install(args)) => install(args.shell),
-        None => print(args.shell),
+    match (args.shell, args.command) {
+        (Some(shell), None) => print(shell),
+        (None, Some(CompletionsCommand::Print(args))) => print(args.shell),
+        (None, Some(CompletionsCommand::Install(args))) => install(args.shell),
+        (None, None) => print_help(),
+        (Some(_), Some(_)) => unreachable!("clap enforces arg/subcommand conflicts"),
     }
 }
 
-fn print(shell: Option<Shell>) -> Result<()> {
-    let shell = shell.ok_or_else(missing_shell_error)?;
+fn print(shell: Shell) -> Result<()> {
     print!("{}", script_with_header(shell)?);
+    Ok(())
+}
+
+fn print_help() -> Result<()> {
+    let mut command = cli::command();
+    let completions = command
+        .find_subcommand_mut("completions")
+        .context("completions subcommand missing")?;
+    completions.print_long_help()?;
+    println!();
     Ok(())
 }
 
@@ -89,10 +111,6 @@ fn resolve_shell(shell: Option<Shell>) -> Result<Shell> {
         })
 }
 
-fn missing_shell_error() -> anyhow::Error {
-    anyhow!("shell required. Supported shells: {}", supported_shells())
-}
-
 fn supported_shells() -> String {
     Shell::value_variants()
         .iter()
@@ -133,7 +151,7 @@ fn shell_config(shell: Shell) -> ShellConfig {
             "bash",
             ".config/tt/completions.bash",
             "~/.bashrc",
-            "source <(tt completions bash)",
+            "source <(tt completions print bash)",
             "source ~/.config/tt/completions.bash",
             "echo 'source ~/.config/tt/completions.bash' >> ~/.bashrc",
         ),
@@ -141,7 +159,7 @@ fn shell_config(shell: Shell) -> ShellConfig {
             "elvish",
             ".config/tt/completions.elvish",
             "~/.elvish/rc.elv",
-            "eval (tt completions elvish | slurp)",
+            "eval (tt completions print elvish | slurp)",
             "eval (cat ~/.config/tt/completions.elvish | slurp)",
             "echo 'eval (cat ~/.config/tt/completions.elvish | slurp)' >> ~/.elvish/rc.elv",
         ),
@@ -149,7 +167,7 @@ fn shell_config(shell: Shell) -> ShellConfig {
             "fish",
             ".config/tt/completions.fish",
             "~/.config/fish/config.fish",
-            "tt completions fish | source",
+            "tt completions print fish | source",
             "source ~/.config/tt/completions.fish",
             "echo 'source ~/.config/tt/completions.fish' >> ~/.config/fish/config.fish",
         ),
@@ -157,7 +175,7 @@ fn shell_config(shell: Shell) -> ShellConfig {
             "powershell",
             ".config/tt/completions.powershell",
             "$PROFILE",
-            "tt completions powershell | Out-String | Invoke-Expression",
+            "tt completions print powershell | Out-String | Invoke-Expression",
             ". ~/.config/tt/completions.powershell",
             "Add-Content -Path $PROFILE -Value '. ~/.config/tt/completions.powershell'",
         ),
@@ -165,7 +183,7 @@ fn shell_config(shell: Shell) -> ShellConfig {
             "zsh",
             ".config/tt/completions.zsh",
             "~/.zshrc",
-            "source <(tt completions zsh)",
+            "source <(tt completions print zsh)",
             "source ~/.config/tt/completions.zsh",
             "echo 'source ~/.config/tt/completions.zsh' >> ~/.zshrc",
         ),
@@ -236,6 +254,7 @@ impl ShellConfig {
 #[cfg(test)]
 mod tests {
     use super::{parse_shell_name, shell_config};
+    use crate::cli;
     use clap_complete::Shell;
 
     #[test]
@@ -253,5 +272,17 @@ mod tests {
             shell_config(Shell::Zsh).append_one_liner(),
             "echo 'source ~/.config/tt/completions.zsh' >> ~/.zshrc"
         );
+    }
+
+    #[test]
+    fn completions_help_lists_print_and_install_modes() {
+        let mut command = cli::command();
+        let completions = command.find_subcommand_mut("completions").unwrap();
+        let mut buffer = Vec::new();
+        completions.write_long_help(&mut buffer).unwrap();
+
+        let help = String::from_utf8(buffer).unwrap();
+        assert!(help.contains("print"));
+        assert!(help.contains("install"));
     }
 }

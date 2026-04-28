@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use include_dir::Dir;
-use owo_colors::OwoColorize;
+use owo_colors::{OwoColorize, Stream, Style};
 
 use super::{status, EmbeddedTool};
 
@@ -44,6 +44,13 @@ fn install_inner(tool: &EmbeddedTool, temp_dir: &Path) -> Result<()> {
         })?;
 
     status::write_installed_version(&tool.definition.id, &tool.definition.version)?;
+    println!(
+        "{} Installed {}",
+        "✓".if_supports_color(Stream::Stdout, |text| {
+            text.style(Style::new().green().bold())
+        }),
+        tool.definition.id
+    );
     print_usage(tool)?;
     Ok(())
 }
@@ -92,10 +99,11 @@ fn print_usage(tool: &EmbeddedTool) -> Result<()> {
         .context("usage.md is not valid UTF-8")?;
 
     for line in usage.lines() {
-        if let Some(heading) = line.strip_prefix("# ") {
-            println!("{}", heading.bold().cyan());
-        } else if let Some(heading) = line.strip_prefix("## ") {
-            println!("{}", heading.bold().yellow());
+        if line.starts_with('#') {
+            println!(
+                "{}",
+                line.if_supports_color(Stream::Stdout, |text| text.bold())
+            );
         } else {
             println!("{line}");
         }

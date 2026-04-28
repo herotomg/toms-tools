@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/herotomg/toms-tools/main/install.sh
 tt tools list
 tt tools install [id]
 tt tools install --all
-tt completions zsh
+tt completions print zsh
 tt completions install zsh
 tt completions install
 ```

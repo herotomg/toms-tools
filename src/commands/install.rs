@@ -2,7 +2,7 @@ use std::io::{self, IsTerminal, Write};
 
 use anyhow::{bail, Result};
 use dialoguer::Confirm;
-use owo_colors::OwoColorize;
+use owo_colors::{OwoColorize, Stream, Style};
 
 use crate::{
     cli::InstallArgs,
@@ -20,10 +20,28 @@ pub fn run(registry: &Registry, args: &InstallArgs) -> Result<()> {
 
         match Status::detect(&tool.definition)? {
             Status::Installed => {
-                println!("{} {}", "Skipping".cyan().bold(), tool.definition.id);
+                println!(
+                    "{} {}",
+                    "Skipping".if_supports_color(Stream::Stdout, |text| {
+                        text.style(Style::new().cyan().bold())
+                    }),
+                    tool.definition
+                        .id
+                        .as_str()
+                        .if_supports_color(Stream::Stdout, |text| text.cyan())
+                );
             }
             Status::NotInstalled | Status::NeedsUpdate => {
-                println!("{} {}", "Installing".green().bold(), tool.definition.id);
+                println!(
+                    "{} {}",
+                    "Installing".if_supports_color(Stream::Stdout, |text| {
+                        text.style(Style::new().green().bold())
+                    }),
+                    tool.definition
+                        .id
+                        .as_str()
+                        .if_supports_color(Stream::Stdout, |text| text.cyan())
+                );
                 installer::install(tool)?;
             }
         }

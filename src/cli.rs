@@ -1,5 +1,8 @@
 use anyhow::Result;
-use clap::{builder::PossibleValuesParser, Args, CommandFactory, Parser, Subcommand};
+use clap::{
+    builder::PossibleValuesParser, Args, CommandFactory, FromArgMatches, Parser, Subcommand,
+};
+use owo_colors::{OwoColorize, Stream};
 
 use crate::{commands, tools::Registry, update};
 
@@ -7,7 +10,6 @@ use crate::{commands, tools::Registry, update};
 #[command(name = "tt")]
 #[command(version)]
 #[command(about = "Tom's Tools CLI")]
-#[command(after_help = "Tip: run `tt tools install --all` to install every tool in one go.")]
 pub struct Cli {
     #[arg(long, hide = true, global = true)]
     no_update_check: bool,
@@ -44,7 +46,7 @@ pub struct InstallArgs {
 }
 
 pub fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = parse();
     update::maybe_check(cli.no_update_check);
 
     match cli.command {
@@ -58,12 +60,28 @@ pub fn run() -> Result<()> {
         }
         Some(Commands::Completions(args)) => commands::completions::run(args),
         None => {
-            let mut command = Cli::command();
+            let mut command = command();
             command.print_long_help()?;
             println!();
             Ok(())
         }
     }
+}
+
+pub fn command() -> clap::Command {
+    <Cli as CommandFactory>::command().after_help(after_help())
+}
+
+fn parse() -> Cli {
+    let matches = command().get_matches();
+    Cli::from_arg_matches(&matches).expect("clap matched arguments should parse")
+}
+
+fn after_help() -> String {
+    format!(
+        "Tip: run {} to install every tool in one go.",
+        "tt tools install --all".if_supports_color(Stream::Stdout, |text| text.cyan())
+    )
 }
 
 fn tool_id_value_parser() -> PossibleValuesParser {
@@ -74,10 +92,17 @@ fn tool_id_value_parser() -> PossibleValuesParser {
 mod tests {
     use clap::Parser;
 
-    use super::Cli;
+    use super::{after_help, Cli};
 
     #[test]
     fn allows_running_without_a_subcommand() {
         assert!(Cli::try_parse_from(["tt"]).is_ok());
+    }
+
+    #[test]
+    fn after_help_tip_uses_plain_command_text() {
+        let help = after_help();
+        assert!(help.contains("tt tools install --all"));
+        assert!(!help.contains('`'));
     }
 }

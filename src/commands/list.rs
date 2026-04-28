@@ -7,6 +7,7 @@ use comfy_table::{
     ContentArrangement, Table,
     Width::{Fixed, Percentage},
 };
+use owo_colors::{OwoColorize, Stream, Style};
 use terminal_size::{terminal_size, Width};
 
 use crate::tools::{status::Status, Registry};
@@ -16,7 +17,19 @@ pub fn run(registry: &Registry) -> Result<()> {
     table.load_preset(UTF8_FULL);
     table.set_content_arrangement(ContentArrangement::Dynamic);
     table.set_width(terminal_width());
-    table.set_header(["ID", "Name", "Description", "Status"]);
+    table.set_header(vec![
+        "ID".if_supports_color(Stream::Stdout, |text| text.bold())
+            .to_string(),
+        "Name"
+            .if_supports_color(Stream::Stdout, |text| text.bold())
+            .to_string(),
+        "Description"
+            .if_supports_color(Stream::Stdout, |text| text.bold())
+            .to_string(),
+        "Status"
+            .if_supports_color(Stream::Stdout, |text| text.bold())
+            .to_string(),
+    ]);
     table.set_constraints(vec![
         UpperBoundary(Fixed(17)),
         UpperBoundary(Fixed(17)),
@@ -26,11 +39,17 @@ pub fn run(registry: &Registry) -> Result<()> {
 
     for tool in registry.tools() {
         let status = Status::detect(&tool.definition)?;
-        table.add_row([
-            tool.definition.id.clone(),
+        table.add_row(vec![
+            tool.definition
+                .id
+                .as_str()
+                .if_supports_color(Stream::Stdout, |text| {
+                    text.style(Style::new().cyan().bold())
+                })
+                .to_string(),
             tool.definition.name.clone(),
             tool.definition.description.clone(),
-            status.label().to_string(),
+            status.label(),
         ]);
     }
 
@@ -41,9 +60,15 @@ pub fn run(registry: &Registry) -> Result<()> {
 impl Status {
     fn label(self) -> String {
         match self {
-            Status::Installed => "Installed".to_owned(),
-            Status::NotInstalled => "Not installed".to_owned(),
-            Status::NeedsUpdate => "Needs update".to_owned(),
+            Status::Installed => "Installed"
+                .if_supports_color(Stream::Stdout, |text| text.green())
+                .to_string(),
+            Status::NotInstalled => "Not installed"
+                .if_supports_color(Stream::Stdout, |text| text.dimmed())
+                .to_string(),
+            Status::NeedsUpdate => "Needs update"
+                .if_supports_color(Stream::Stdout, |text| text.yellow())
+                .to_string(),
         }
     }
 }
