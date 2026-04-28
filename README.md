@@ -39,5 +39,5 @@ cargo run -- tools list
 ## Releasing
 
 ```sh
-git tag v0.1.5 && git push origin v0.1.5
+git tag v0.1.6 && git push origin v0.1.6
 ```

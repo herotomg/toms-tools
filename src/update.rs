@@ -100,20 +100,24 @@ fn fetch_latest_release_tag() -> Option<String> {
 }
 
 fn print_update_notice_if_newer(current: &Version, latest: &str) {
-    let Some(latest) = Version::parse(latest).ok() else {
+    let Some(notice) = update_notice(current, latest) else {
         return;
     };
 
+    eprintln!("{}", notice.yellow());
+}
+
+fn update_notice(current: &Version, latest: &str) -> Option<String> {
+    let latest = Version::parse(latest).ok()?;
+
     if latest > *current {
-        eprintln!(
-            "{}",
-            format!(
-                "tt v{} → v{} available. Update: {}",
-                current, latest, UPDATE_COMMAND
-            )
-            .yellow()
-        );
+        return Some(format!(
+            "tt v{} → v{} available.\nRun to update:\n{}",
+            current, latest, UPDATE_COMMAND
+        ));
     }
+
+    None
 }
 
 fn update_check_disabled(disabled_by_flag: bool, env_value: Option<&str>) -> bool {
@@ -243,5 +247,23 @@ mod tests {
         assert_eq!(normalize_version("v1.2.3"), Some("1.2.3"));
         assert_eq!(normalize_version("1.2.3"), Some("1.2.3"));
         assert_eq!(normalize_version(""), None);
+    }
+
+    #[test]
+    fn update_notice_includes_version_line_and_install_command() {
+        let current = Version::parse("0.1.6").unwrap();
+
+        let notice = update_notice(&current, "9.9.9").unwrap();
+        assert!(notice.contains("tt v0.1.6 → v9.9.9 available."));
+        assert!(notice.contains("Run to update:"));
+        assert!(notice.contains(UPDATE_COMMAND));
+    }
+
+    #[test]
+    fn update_notice_is_omitted_when_not_newer() {
+        let current = Version::parse("0.1.6").unwrap();
+
+        assert_eq!(update_notice(&current, "0.1.6"), None);
+        assert_eq!(update_notice(&current, "0.1.5"), None);
     }
 }

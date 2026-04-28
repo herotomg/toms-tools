@@ -79,14 +79,20 @@ fn render_section(usage: &str, status: Status) -> String {
 
     match lines.next() {
         Some(first_line) => {
-            rendered.push(tool_usage::style_line(first_line));
-            rendered.push(status.label());
-            rendered.extend(lines.map(tool_usage::style_line));
+            rendered.push(first_line.to_owned());
+            rendered.push(String::new());
+            rendered.push(format!("Status: {}", status.plain_label()));
+
+            let remaining = lines.skip_while(|line| line.is_empty()).collect::<Vec<_>>();
+            if !remaining.is_empty() {
+                rendered.push(String::new());
+                rendered.extend(remaining.into_iter().map(str::to_owned));
+            }
         }
-        None => rendered.push(status.label()),
+        None => rendered.push(format!("Status: {}", status.plain_label())),
     }
 
-    rendered.join("\n") + "\n"
+    tool_usage::render(&rendered.join("\n"))
 }
 
 #[cfg(test)]
@@ -109,6 +115,6 @@ mod tests {
     fn render_section_inserts_status_after_heading() {
         let rendered = render_section("# Demo\n\n- one", Status::NeedsUpdate);
 
-        assert!(rendered.starts_with("# Demo\nNeeds update\n\n- one\n"));
+        assert_eq!(rendered, "# Demo\n\nStatus: Needs update\n\n- one\n");
     }
 }

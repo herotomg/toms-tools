@@ -25,6 +25,14 @@ struct InstalledState {
 }
 
 impl Status {
+    pub fn plain_label(self) -> &'static str {
+        match self {
+            Status::Installed => "Installed",
+            Status::NotInstalled => "Not installed",
+            Status::NeedsUpdate => "Needs update",
+        }
+    }
+
     pub fn detect(tool: &Tool) -> Result<Self> {
         if !run_status_check(&tool.status_check)? {
             return Ok(Self::NotInstalled);
@@ -43,13 +51,16 @@ impl Status {
 
     pub fn label(self) -> String {
         match self {
-            Status::Installed => "Installed"
+            Status::Installed => self
+                .plain_label()
                 .if_supports_color(Stream::Stdout, |text| text.green())
                 .to_string(),
-            Status::NotInstalled => "Not installed"
+            Status::NotInstalled => self
+                .plain_label()
                 .if_supports_color(Stream::Stdout, |text| text.dimmed())
                 .to_string(),
-            Status::NeedsUpdate => "Needs update"
+            Status::NeedsUpdate => self
+                .plain_label()
                 .if_supports_color(Stream::Stdout, |text| text.yellow())
                 .to_string(),
         }

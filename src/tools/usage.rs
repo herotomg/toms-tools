@@ -1,5 +1,7 @@
+use std::io::{self, IsTerminal};
+
 use anyhow::{Context, Result};
-use owo_colors::{OwoColorize, Stream};
+use termimad::MadSkin;
 
 use super::EmbeddedTool;
 
@@ -12,28 +14,46 @@ pub fn read(tool: &EmbeddedTool) -> Result<&'static str> {
 }
 
 pub fn print(tool: &EmbeddedTool) -> Result<()> {
-    for line in read(tool)?.lines() {
-        println!("{}", style_line(line));
-    }
+    print!("{}", render(read(tool)?));
 
     Ok(())
 }
 
-pub fn style_line(line: &str) -> String {
-    if line.starts_with('#') {
-        line.if_supports_color(Stream::Stdout, |text| text.bold())
-            .to_string()
+pub fn render(markdown: &str) -> String {
+    render_for_terminal(markdown, io::stdout().is_terminal())
+}
+
+fn render_for_terminal(markdown: &str, is_terminal: bool) -> String {
+    let rendered = if is_terminal {
+        MadSkin::default().term_text(markdown).to_string()
     } else {
-        line.to_owned()
+        markdown.to_owned()
+    };
+
+    if rendered.ends_with('\n') {
+        rendered
+    } else {
+        format!("{rendered}\n")
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::style_line;
+    use super::render_for_terminal;
 
     #[test]
-    fn non_heading_lines_are_unchanged() {
-        assert_eq!(style_line("- use this command"), "- use this command");
+    fn non_tty_output_keeps_plain_markdown() {
+        assert_eq!(
+            render_for_terminal("# Demo\n\n- `tt demo`", false),
+            "# Demo\n\n- `tt demo`\n"
+        );
+    }
+
+    #[test]
+    fn tty_output_formats_markdown() {
+        let rendered = render_for_terminal("# Demo\n\n- `tt demo`", true);
+
+        assert_ne!(rendered, "# Demo\n\n- `tt demo`\n");
+        assert!(!rendered.contains("`tt demo`"));
     }
 }
