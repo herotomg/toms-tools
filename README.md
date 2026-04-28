@@ -17,6 +17,8 @@ tt tools list
 tt tools install [id]
 tt tools install --all
 tt completions zsh
+tt completions install zsh
+tt completions install
 ```
 
 ## Local development

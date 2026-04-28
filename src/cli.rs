@@ -1,8 +1,5 @@
-use std::io;
-
 use anyhow::Result;
 use clap::{builder::PossibleValuesParser, Args, CommandFactory, Parser, Subcommand};
-use clap_complete::{generate, Shell};
 
 use crate::{commands, tools::Registry, update};
 
@@ -10,17 +7,18 @@ use crate::{commands, tools::Registry, update};
 #[command(name = "tt")]
 #[command(version)]
 #[command(about = "Tom's Tools CLI")]
+#[command(after_help = "Tip: run `tt tools install --all` to install every tool in one go.")]
 pub struct Cli {
     #[arg(long, hide = true, global = true)]
     no_update_check: bool,
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
 enum Commands {
     Tools(ToolsArgs),
-    Completions { shell: Shell },
+    Completions(commands::completions::CompletionsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -50,7 +48,7 @@ pub fn run() -> Result<()> {
     update::maybe_check(cli.no_update_check);
 
     match cli.command {
-        Commands::Tools(args) => {
+        Some(Commands::Tools(args)) => {
             let registry = Registry::load()?;
 
             match args.command {
@@ -58,9 +56,11 @@ pub fn run() -> Result<()> {
                 ToolsCommand::Install(args) => commands::install::run(&registry, &args),
             }
         }
-        Commands::Completions { shell } => {
+        Some(Commands::Completions(args)) => commands::completions::run(args),
+        None => {
             let mut command = Cli::command();
-            generate(shell, &mut command, "tt", &mut io::stdout());
+            command.print_long_help()?;
+            println!();
             Ok(())
         }
     }
@@ -68,4 +68,16 @@ pub fn run() -> Result<()> {
 
 fn tool_id_value_parser() -> PossibleValuesParser {
     PossibleValuesParser::new(Registry::embedded_tool_ids())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::Cli;
+
+    #[test]
+    fn allows_running_without_a_subcommand() {
+        assert!(Cli::try_parse_from(["tt"]).is_ok());
+    }
 }
