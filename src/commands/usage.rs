@@ -67,39 +67,13 @@ fn resolve_selected_tools<'a>(
 }
 
 fn print_section(tool: &EmbeddedTool, status: Status) -> Result<()> {
-    let usage = tool_usage::read(tool)?;
-    print!("{}", render_section(usage, status));
+    print!("{}", tool_usage::render_card(tool, status)?);
 
     Ok(())
 }
 
-fn render_section(usage: &str, status: Status) -> String {
-    let mut rendered = Vec::new();
-    let mut lines = usage.lines();
-
-    match lines.next() {
-        Some(first_line) => {
-            rendered.push(first_line.to_owned());
-            rendered.push(String::new());
-            rendered.push(format!("Status: {}", status.plain_label()));
-
-            let remaining = lines.skip_while(|line| line.is_empty()).collect::<Vec<_>>();
-            if !remaining.is_empty() {
-                rendered.push(String::new());
-                rendered.extend(remaining.into_iter().map(str::to_owned));
-            }
-        }
-        None => rendered.push(format!("Status: {}", status.plain_label())),
-    }
-
-    tool_usage::render(&rendered.join("\n"))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::render_section;
-    use crate::tools::status::Status;
-
     #[test]
     fn default_help_includes_usage_subcommand() {
         let mut command = crate::cli::command();
@@ -109,12 +83,5 @@ mod tests {
 
         let help = String::from_utf8(buffer).unwrap();
         assert!(help.contains("usage"));
-    }
-
-    #[test]
-    fn render_section_inserts_status_after_heading() {
-        let rendered = render_section("# Demo\n\n- one", Status::NeedsUpdate);
-
-        assert_eq!(rendered, "# Demo\n\nStatus: Needs update\n\n- one\n");
     }
 }
