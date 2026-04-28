@@ -1,6 +1,6 @@
 id = "gh-unresolved"
 name = "gh unresolved"
 description = "Install the `gh unresolved` command to list unresolved CR comments on a PR."
-version = "2"
+version = "3"
 depends = []
-status_check = "gh alias list 2>/dev/null | grep -q '^unresolved:'"
+status_check = "gh alias list 2>/dev/null | awk '/^unresolved:/{found=1; next} found && /^[^[:space:]].*:/{exit} found{print}' | grep -Fq '\"Unknown\"'"

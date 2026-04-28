@@ -11,17 +11,17 @@ if ! gh auth status >/dev/null 2>&1; then
   exit 1
 fi
 
-# Backup existing alias before overwriting
-EXISTING=$(gh alias list 2>/dev/null | awk -F: '/^unresolved:/{print substr($0, index($0,$2))}')
-if [ -n "${EXISTING:-}" ]; then
+# Backup existing gh config before making changes
+if [ -f "$HOME/.config/gh/config.yml" ]; then
   TS=$(date +%Y%m%d-%H%M%S)
-  if [ -f "$HOME/.config/gh/config.yml" ]; then
-    cp "$HOME/.config/gh/config.yml" "$HOME/.config/gh/config.yml.bak.$TS"
-    echo "Backed up gh config to ~/.config/gh/config.yml.bak.$TS" >&2
-  fi
+  cp "$HOME/.config/gh/config.yml" "$HOME/.config/gh/config.yml.bak.$TS"
+  echo "Backed up gh config to ~/.config/gh/config.yml.bak.$TS" >&2
 fi
 
-ALIAS_BODY=$(cat <<'EOF'
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+
+cat >"$TMP" <<'GH_UNRESOLVED_BODY_EOF'
 !
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 OWNER=${REPO%%/*}
@@ -60,9 +60,9 @@ JQ_FILTER=$(cat <<'JQ'
     | ($thread.comments.nodes[0] // {}) as $first_comment
     | (
         "========== PR Review Thread \($thread_entry.key + 1) ==========\n"
-        + "Location: \($first_comment.path // \"Unknown\"):\(
+        + "Location: \($first_comment.path // "Unknown"):\(
             if $first_comment.line == null then
-              (if $thread.isOutdated then \"Stale\" else \"NoLine\" end)
+              (if $thread.isOutdated then "Stale" else "NoLine" end)
             else
               ($first_comment.line | tostring)
             end
@@ -94,9 +94,21 @@ if [ -z "$COMMENTS" ]; then
 else
   printf "%s\n" "$COMMENTS"
 fi
-EOF
-)
+GH_UNRESOLVED_BODY_EOF
+
+EXISTING=$(gh alias list 2>/dev/null | awk '
+  /^unresolved:/ { found=1; next }
+  found && /^[^[:space:]].*:/ { exit }
+  found { sub(/^    /, ""); print }
+' || true)
+NEW=$(cat "$TMP")
+
+if [ "${EXISTING:-}" = "$NEW" ]; then
+  echo "✓ gh unresolved alias already up to date" >&2
+  exit 0
+fi
 
 gh alias delete unresolved 2>/dev/null || true
 
-gh alias set unresolved --shell "$ALIAS_BODY"
+gh alias set unresolved --shell "$NEW"
+echo "✓ gh unresolved installed" >&2
