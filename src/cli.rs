@@ -47,6 +47,8 @@ pub struct InstallArgs {
     pub ids: Vec<String>,
     #[arg(short, long)]
     pub all: bool,
+    #[arg(short, long)]
+    pub verbose: bool,
     #[arg(short = 'y', long)]
     pub yes: bool,
 }
@@ -107,7 +109,7 @@ fn tool_id_value_parser() -> PossibleValuesParser {
 mod tests {
     use clap::Parser;
 
-    use super::{after_help, Cli};
+    use super::{after_help, Cli, InstallArgs};
 
     #[test]
     fn allows_running_without_a_subcommand() {
@@ -130,5 +132,27 @@ mod tests {
 
         let help = String::from_utf8(buffer).unwrap();
         assert!(help.contains("usage"));
+    }
+
+    #[test]
+    fn install_args_support_verbose_flag() {
+        let cli = Cli::try_parse_from(["tt", "tools", "install", "--all", "-v"]).unwrap();
+
+        let args = match cli.command.unwrap() {
+            super::Commands::Tools(tools) => match tools.command {
+                super::ToolsCommand::Install(args) => args,
+                _ => panic!("expected install command"),
+            },
+            _ => panic!("expected tools command"),
+        };
+
+        assert!(matches!(
+            args,
+            InstallArgs {
+                all: true,
+                verbose: true,
+                ..
+            }
+        ));
     }
 }

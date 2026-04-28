@@ -1,6 +1,7 @@
 use std::io::{self, IsTerminal};
 
 use anyhow::{Context, Result};
+use owo_colors::{OwoColorize, Stream, Style};
 use termimad::MadSkin;
 
 use super::EmbeddedTool;
@@ -13,10 +14,12 @@ pub fn read(tool: &EmbeddedTool) -> Result<&'static str> {
         .context("usage.md is not valid UTF-8")
 }
 
-pub fn print(tool: &EmbeddedTool) -> Result<()> {
-    print!("{}", render(read(tool)?));
-
-    Ok(())
+pub fn render_post_install(tool: &EmbeddedTool) -> Result<String> {
+    Ok(format!(
+        "{}\n{}",
+        post_install_header(&tool.definition.name),
+        render(read(tool)?)
+    ))
 }
 
 pub fn render(markdown: &str) -> String {
@@ -37,9 +40,17 @@ fn render_for_terminal(markdown: &str, is_terminal: bool) -> String {
     }
 }
 
+fn post_install_header(name: &str) -> String {
+    format!("━━━ How to use: {name} ━━━")
+        .if_supports_color(Stream::Stdout, |text| {
+            text.style(Style::new().cyan().bold())
+        })
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::render_for_terminal;
+    use super::{post_install_header, render_for_terminal};
 
     #[test]
     fn non_tty_output_keeps_plain_markdown() {
@@ -55,5 +66,13 @@ mod tests {
 
         assert_ne!(rendered, "# Demo\n\n- `tt demo`\n");
         assert!(!rendered.contains("`tt demo`"));
+    }
+
+    #[test]
+    fn post_install_header_uses_expected_text() {
+        assert_eq!(
+            post_install_header("Intent PR Fixer"),
+            "━━━ How to use: Intent PR Fixer ━━━"
+        );
     }
 }
