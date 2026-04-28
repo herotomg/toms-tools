@@ -25,7 +25,7 @@ struct LatestRelease {
     tag_name: String,
 }
 
-pub fn maybe_check(disabled_by_flag: bool) {
+pub fn maybe_check(disabled_by_flag: bool, force_refresh: bool) {
     if update_check_disabled(
         disabled_by_flag,
         env::var(UPDATE_DISABLE_ENV).ok().as_deref(),
@@ -33,28 +33,44 @@ pub fn maybe_check(disabled_by_flag: bool) {
         return;
     }
 
-    let _ = check_for_update();
+    let _ = check_for_update(force_refresh);
 }
 
-fn check_for_update() -> Result<(), ()> {
+fn check_for_update(force_refresh: bool) -> Result<(), ()> {
     let current_version = Version::parse(env!("CARGO_PKG_VERSION")).map_err(|_| ())?;
     let cache_path = cache_file_path().ok_or(())?;
     let now = now_secs().ok_or(())?;
 
-    if let Some(cache) = read_cache_if_fresh(&cache_path, now) {
-        print_update_notice_if_newer(&current_version, &cache.latest);
-        return Ok(());
+    let latest =
+        latest_release_for_update(&cache_path, now, force_refresh, fetch_latest_release_tag);
+
+    if let Some(latest) = latest {
+        print_update_notice_if_newer(&current_version, &latest);
     }
 
-    let latest = fetch_latest_release_tag().unwrap_or_else(|| current_version.to_string());
+    Ok(())
+}
+
+fn latest_release_for_update(
+    cache_path: &Path,
+    now: u64,
+    force_refresh: bool,
+    fetch_latest: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    if !force_refresh {
+        if let Some(cache) = read_cache_if_fresh(cache_path, now) {
+            return Some(cache.latest);
+        }
+    }
+
+    let latest = fetch_latest()?;
     let cache = UpdateCache {
         checked_at: now,
-        latest,
+        latest: latest.clone(),
     };
 
-    let _ = write_cache(&cache_path, &cache);
-    print_update_notice_if_newer(&current_version, &cache.latest);
-    Ok(())
+    let _ = write_cache(cache_path, &cache);
+    Some(latest)
 }
 
 fn read_cache_if_fresh(path: &Path, now: u64) -> Option<UpdateCache> {
@@ -265,5 +281,68 @@ mod tests {
 
         assert_eq!(update_notice(&current, "0.1.6"), None);
         assert_eq!(update_notice(&current, "0.1.5"), None);
+    }
+
+    #[test]
+    fn fetch_failure_leaves_existing_cache_alone() {
+        let path = test_cache_path("fetch_failure_leaves_existing_cache_alone");
+        let original = "{\"checked_at\":1,\"latest\":\"8.8.8\"}\n";
+        fs::write(&path, original).unwrap();
+
+        let latest = latest_release_for_update(&path, CACHE_MAX_AGE_SECS + 1, false, || None);
+
+        assert_eq!(latest, None);
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        cleanup_test_cache(&path);
+    }
+
+    #[test]
+    fn successful_fetch_writes_cache() {
+        let path = test_cache_path("successful_fetch_writes_cache");
+
+        let latest =
+            latest_release_for_update(&path, 1_700_000_123, false, || Some("9.9.9".to_owned()));
+
+        assert_eq!(latest, Some("9.9.9".to_owned()));
+        assert_eq!(
+            read_cache(&path),
+            Some(UpdateCache {
+                checked_at: 1_700_000_123,
+                latest: "9.9.9".to_owned(),
+            })
+        );
+        cleanup_test_cache(&path);
+    }
+
+    #[test]
+    fn fetch_failure_does_not_poison_empty_cache_with_current_version() {
+        let path =
+            test_cache_path("fetch_failure_does_not_poison_empty_cache_with_current_version");
+
+        let latest = latest_release_for_update(&path, 1_700_000_123, false, || None);
+
+        assert_eq!(latest, None);
+        assert!(!path.exists());
+        cleanup_test_cache(&path);
+    }
+
+    #[test]
+    fn force_refresh_skips_fresh_cache() {
+        let path = test_cache_path("force_refresh_skips_fresh_cache");
+        fs::write(&path, "{\"checked_at\":100,\"latest\":\"1.0.0\"}\n").unwrap();
+
+        let latest = latest_release_for_update(&path, 101, true, || Some("2.0.0".to_owned()));
+
+        assert_eq!(latest, Some("2.0.0".to_owned()));
+        assert_eq!(read_cache(&path).unwrap().latest, "2.0.0");
+        cleanup_test_cache(&path);
+    }
+
+    fn test_cache_path(name: &str) -> PathBuf {
+        env::temp_dir().join(format!("tt-update-test-{}-{name}.json", std::process::id()))
+    }
+
+    fn cleanup_test_cache(path: &Path) {
+        let _ = fs::remove_file(path);
     }
 }

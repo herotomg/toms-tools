@@ -1,13 +1,42 @@
 # toms-tools
 
-## What it is
-
 `tt` is a small Rust CLI for discovering, installing, and looking up usage for Tom's curated helper tools from the bundled `tools/` registry.
 
-## Install
+## Quick start
+
+Install every bundled tool in one go:
+
+```sh
+tt tools install --all
+```
+
+If you do not have `tt` yet, install it first:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/herotomg/toms-tools/main/install.sh | bash
+```
+
+Useful follow-up commands:
+
+```sh
+tt tools list
+tt tools usage --all
+tt --check-update
+```
+
+Use `tt --check-update` to force a fresh update check instead of waiting for the cached daily check.
+
+## Tools
+
+| Tool | Description |
+| --- | --- |
+| `gh-unresolved` | Install the `gh unresolved` command to list unresolved CR comments on a PR. |
+| `intent-pr-fixer` | Install the PR Fixer Intent specialist agent for one-shot CR comment fixing. |
+
+Install a single tool by id:
+
+```sh
+tt tools install gh-unresolved
 ```
 
 ## Usage
@@ -39,5 +68,5 @@ cargo run -- tools list
 ## Releasing
 
 ```sh
-git tag v0.1.9 && git push origin v0.1.9
+git tag v0.1.11 && git push origin v0.1.11
 ```

@@ -13,6 +13,9 @@ use crate::{commands, tools::Registry, update};
 pub struct Cli {
     #[arg(long, hide = true, global = true)]
     no_update_check: bool,
+    #[arg(long, global = true, conflicts_with = "no_update_check")]
+    /// Force a fresh update check instead of using the cached result
+    check_update: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -63,7 +66,7 @@ pub struct UsageArgs {
 
 pub fn run() -> Result<()> {
     let cli = parse();
-    update::maybe_check(cli.no_update_check);
+    update::maybe_check(cli.no_update_check, cli.check_update);
 
     match cli.command {
         Some(Commands::Tools(args)) => {
@@ -132,6 +135,17 @@ mod tests {
 
         let help = String::from_utf8(buffer).unwrap();
         assert!(help.contains("usage"));
+    }
+
+    #[test]
+    fn help_documents_force_update_check_flag() {
+        let mut command = super::command();
+        let mut buffer = Vec::new();
+        command.write_long_help(&mut buffer).unwrap();
+
+        let help = String::from_utf8(buffer).unwrap();
+        assert!(help.contains("--check-update"));
+        assert!(help.contains("Force a fresh update check"));
     }
 
     #[test]
