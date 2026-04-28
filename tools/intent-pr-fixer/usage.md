@@ -4,7 +4,6 @@ Install the Intent specialist that fixes unresolved PR review comments in one pa
 
 ## Before you start
 
-- Install `gh-unresolved` first. This tool depends on it.
 - Open Intent on the PR branch you want to fix.
 
 ## In Intent
