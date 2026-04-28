@@ -11,7 +11,8 @@ use serde::Deserialize;
 const CACHE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
 const UPDATE_URL: &str = "https://api.github.com/repos/herotomg/toms-tools/releases/latest";
 const UPDATE_DISABLE_ENV: &str = "TT_NO_UPDATE_CHECK";
-const UPDATE_COMMAND: &str = "curl -fsSL https://raw.githubusercontent.com/herotomg/toms-tools/main/install.sh | bash";
+const UPDATE_COMMAND: &str =
+    "curl -fsSL https://raw.githubusercontent.com/herotomg/toms-tools/main/install.sh | bash";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UpdateCache {
@@ -25,7 +26,10 @@ struct LatestRelease {
 }
 
 pub fn maybe_check(disabled_by_flag: bool) {
-    if update_check_disabled(disabled_by_flag, env::var(UPDATE_DISABLE_ENV).ok().as_deref()) {
+    if update_check_disabled(
+        disabled_by_flag,
+        env::var(UPDATE_DISABLE_ENV).ok().as_deref(),
+    ) {
         return;
     }
 

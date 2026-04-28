@@ -65,7 +65,10 @@ impl Registry {
 
             for required in ["install.sh", "usage.md"] {
                 if dir.get_file(dir.path().join(required)).is_none() {
-                    return Err(anyhow!("tool '{}' missing required file {required}", tool.id));
+                    return Err(anyhow!(
+                        "tool '{}' missing required file {required}",
+                        tool.id
+                    ));
                 }
             }
 

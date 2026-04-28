@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeMap,
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -69,7 +68,8 @@ fn read_installed_state() -> Result<InstalledState> {
     }
 
     let content = fs::read_to_string(&path).with_context(|| format!("failed to read {path:?}"))?;
-    let installed = toml::from_str(&content).with_context(|| format!("failed to parse {path:?}"))?;
+    let installed =
+        toml::from_str(&content).with_context(|| format!("failed to parse {path:?}"))?;
     Ok(installed)
 }
 

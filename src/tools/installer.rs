@@ -59,8 +59,7 @@ fn create_temp_dir(id: &str) -> Result<std::path::PathBuf> {
 }
 
 fn extract_dir(dir: &Dir<'_>, destination: &Path) -> Result<()> {
-    fs::create_dir_all(destination)
-        .with_context(|| format!("failed to create {destination:?}"))?;
+    fs::create_dir_all(destination).with_context(|| format!("failed to create {destination:?}"))?;
 
     for file in dir.files() {
         let name = file

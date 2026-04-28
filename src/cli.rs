@@ -8,6 +8,7 @@ use crate::{commands, tools::Registry, update};
 
 #[derive(Debug, Parser)]
 #[command(name = "tt")]
+#[command(version)]
 #[command(about = "Tom's Tools CLI")]
 pub struct Cli {
     #[arg(long, hide = true, global = true)]
