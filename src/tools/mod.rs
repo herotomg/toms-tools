@@ -1,6 +1,7 @@
 pub mod deps;
 pub mod installer;
 pub mod status;
+pub mod usage;
 
 use std::collections::BTreeMap;
 

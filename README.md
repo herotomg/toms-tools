@@ -2,7 +2,7 @@
 
 ## What it is
 
-`tt` is a small Rust CLI for discovering and installing Tom's curated helper tools from the bundled `tools/` registry. It gives you a single command for listing available tools, installing one tool by id, or installing everything at once.
+`tt` is a small Rust CLI for discovering, installing, and looking up usage for Tom's curated helper tools from the bundled `tools/` registry.
 
 ## Install
 
@@ -14,6 +14,8 @@ curl -fsSL https://raw.githubusercontent.com/herotomg/toms-tools/main/install.sh
 
 ```sh
 tt tools list
+tt tools usage
+tt tools usage --all
 tt tools install [id]
 tt tools install --all
 tt completions print zsh
@@ -37,5 +39,5 @@ cargo run -- tools list
 ## Releasing
 
 ```sh
-git tag v0.1.1 && git push origin v0.1.1
+git tag v0.1.5 && git push origin v0.1.5
 ```

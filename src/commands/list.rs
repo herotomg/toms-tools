@@ -57,22 +57,6 @@ pub fn run(registry: &Registry) -> Result<()> {
     Ok(())
 }
 
-impl Status {
-    fn label(self) -> String {
-        match self {
-            Status::Installed => "Installed"
-                .if_supports_color(Stream::Stdout, |text| text.green())
-                .to_string(),
-            Status::NotInstalled => "Not installed"
-                .if_supports_color(Stream::Stdout, |text| text.dimmed())
-                .to_string(),
-            Status::NeedsUpdate => "Needs update"
-                .if_supports_color(Stream::Stdout, |text| text.yellow())
-                .to_string(),
-        }
-    }
-}
-
 fn terminal_width() -> u16 {
     env_width(env::var("COLUMNS").ok().as_deref())
         .or_else(|| terminal_size().map(|(Width(width), _)| width))

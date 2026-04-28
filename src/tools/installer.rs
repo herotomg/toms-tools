@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use include_dir::Dir;
 use owo_colors::{OwoColorize, Stream, Style};
 
-use super::{status, EmbeddedTool};
+use super::{status, usage, EmbeddedTool};
 
 pub fn install(tool: &EmbeddedTool) -> Result<()> {
     let temp_dir = create_temp_dir(&tool.definition.id)?;
@@ -51,7 +51,7 @@ fn install_inner(tool: &EmbeddedTool, temp_dir: &Path) -> Result<()> {
         }),
         tool.definition.id
     );
-    print_usage(tool)?;
+    usage::print(tool)?;
     Ok(())
 }
 
@@ -85,28 +85,6 @@ fn extract_dir(dir: &Dir<'_>, destination: &Path) -> Result<()> {
             .and_then(|value| value.to_str())
             .context("invalid embedded directory name")?;
         extract_dir(child, &destination.join(name))?;
-    }
-
-    Ok(())
-}
-
-fn print_usage(tool: &EmbeddedTool) -> Result<()> {
-    let usage = tool
-        .dir()
-        .get_file(tool.dir().path().join("usage.md"))
-        .context("usage.md missing")?
-        .contents_utf8()
-        .context("usage.md is not valid UTF-8")?;
-
-    for line in usage.lines() {
-        if line.starts_with('#') {
-            println!(
-                "{}",
-                line.if_supports_color(Stream::Stdout, |text| text.bold())
-            );
-        } else {
-            println!("{line}");
-        }
     }
 
     Ok(())

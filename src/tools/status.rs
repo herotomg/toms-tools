@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use owo_colors::{OwoColorize, Stream};
 use serde::{Deserialize, Serialize};
 
 use super::Tool;
@@ -33,6 +34,24 @@ impl Status {
         match installed.tools.get(&tool.id) {
             Some(version) if version == &tool.version => Ok(Self::Installed),
             _ => Ok(Self::NeedsUpdate),
+        }
+    }
+
+    pub fn is_installed(self) -> bool {
+        !matches!(self, Self::NotInstalled)
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            Status::Installed => "Installed"
+                .if_supports_color(Stream::Stdout, |text| text.green())
+                .to_string(),
+            Status::NotInstalled => "Not installed"
+                .if_supports_color(Stream::Stdout, |text| text.dimmed())
+                .to_string(),
+            Status::NeedsUpdate => "Needs update"
+                .if_supports_color(Stream::Stdout, |text| text.yellow())
+                .to_string(),
         }
     }
 }
