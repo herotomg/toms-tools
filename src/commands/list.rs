@@ -17,6 +17,7 @@ use crate::tools::{status::Status, Registry};
 
 pub fn run(registry: &Registry) -> Result<()> {
     let mut table = build_table(terminal_width(), io::stdout().is_terminal());
+    let mut has_updates = false;
     table.set_header(vec![
         "ID".if_supports_color(Stream::Stdout, |text| text.bold())
             .to_string(),
@@ -33,6 +34,7 @@ pub fn run(registry: &Registry) -> Result<()> {
 
     for tool in registry.tools() {
         let status = Status::detect(&tool.definition)?;
+        has_updates |= matches!(status, Status::NeedsUpdate);
         table.add_row(vec![
             tool.definition
                 .id
@@ -48,7 +50,17 @@ pub fn run(registry: &Registry) -> Result<()> {
     }
 
     println!("{table}");
+    if let Some(tip) = update_tip(has_updates) {
+        println!(
+            "{}",
+            tip.if_supports_color(Stream::Stdout, |text| text.dimmed())
+        );
+    }
     Ok(())
+}
+
+fn update_tip(has_updates: bool) -> Option<&'static str> {
+    has_updates.then_some("Tip: run tt tools update to update outdated bundled tools.")
 }
 
 fn build_table(width: u16, is_terminal: bool) -> Table {
@@ -87,7 +99,7 @@ fn env_width(value: Option<&str>) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_table, env_width, table_preset};
+    use super::{build_table, env_width, table_preset, update_tip};
 
     #[test]
     fn parses_columns_from_env() {
@@ -137,5 +149,14 @@ mod tests {
         assert!(rendered.contains('+'));
         assert!(rendered.contains('|'));
         assert!(!rendered.contains('┌'));
+    }
+
+    #[test]
+    fn shows_update_tip_only_when_needed() {
+        assert_eq!(
+            update_tip(true),
+            Some("Tip: run tt tools update to update outdated bundled tools.")
+        );
+        assert_eq!(update_tip(false), None);
     }
 }

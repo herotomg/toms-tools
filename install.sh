@@ -6,6 +6,7 @@ repo="herotomg/toms-tools"
 bin_name="tt"
 install_dir="${TT_INSTALL_DIR:-$HOME/.local/bin}"
 install_path="$install_dir/$bin_name"
+install_action="${TT_INSTALL_ACTION:-Installed}"
 path_block_start="# >>> tt PATH setup >>>"
 path_block_end="# <<< tt PATH setup <<<"
 
@@ -51,7 +52,7 @@ fi
 cp "$tmpdir/$bin_name" "$install_path"
 chmod +x "$install_path"
 
-echo "Installed $bin_name to $install_path"
+echo "$install_action $bin_name to $install_path"
 
 case ":${PATH:-}:" in
   *":$install_dir:"*) ;;

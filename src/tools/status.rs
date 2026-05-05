@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use owo_colors::{OwoColorize, Stream};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use super::Tool;
@@ -39,10 +40,10 @@ impl Status {
         }
 
         let installed = read_installed_state()?;
-        match installed.tools.get(&tool.id) {
-            Some(version) if version == &tool.version => Ok(Self::Installed),
-            _ => Ok(Self::NeedsUpdate),
-        }
+        Ok(status_from_recorded_version(
+            installed.tools.get(&tool.id).map(String::as_str),
+            &tool.version,
+        ))
     }
 
     pub fn is_installed(self) -> bool {
@@ -110,4 +111,45 @@ fn installed_file_path() -> Result<PathBuf> {
         .join("share")
         .join("toms-tools")
         .join("installed.toml"))
+}
+
+fn status_from_recorded_version(installed: Option<&str>, bundled: &str) -> Status {
+    match installed {
+        Some(version) if recorded_version_is_current(version, bundled) => Status::Installed,
+        _ => Status::NeedsUpdate,
+    }
+}
+
+fn recorded_version_is_current(installed: &str, bundled: &str) -> bool {
+    match (Version::parse(installed), Version::parse(bundled)) {
+        (Ok(installed), Ok(bundled)) => installed >= bundled,
+        _ => installed == bundled,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{recorded_version_is_current, status_from_recorded_version, Status};
+
+    #[test]
+    fn treats_older_recorded_version_as_needing_update() {
+        assert_eq!(status_from_recorded_version(Some("1.2.2"), "1.2.3"), Status::NeedsUpdate);
+    }
+
+    #[test]
+    fn treats_equal_or_newer_recorded_versions_as_installed() {
+        assert_eq!(status_from_recorded_version(Some("1.2.3"), "1.2.3"), Status::Installed);
+        assert_eq!(status_from_recorded_version(Some("1.2.4"), "1.2.3"), Status::Installed);
+    }
+
+    #[test]
+    fn treats_missing_recorded_version_as_needing_update() {
+        assert_eq!(status_from_recorded_version(None, "1.2.3"), Status::NeedsUpdate);
+    }
+
+    #[test]
+    fn falls_back_to_string_equality_for_non_semver_values() {
+        assert!(recorded_version_is_current("dev-build", "dev-build"));
+        assert!(!recorded_version_is_current("dev-build", "1.2.3"));
+    }
 }

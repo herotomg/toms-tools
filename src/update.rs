@@ -1,9 +1,11 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::{bail, Context, Result};
 use owo_colors::OwoColorize;
 use semver::Version;
 use serde::Deserialize;
@@ -11,8 +13,9 @@ use serde::Deserialize;
 const CACHE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
 const UPDATE_URL: &str = "https://api.github.com/repos/herotomg/toms-tools/releases/latest";
 const UPDATE_DISABLE_ENV: &str = "TT_NO_UPDATE_CHECK";
-const UPDATE_COMMAND: &str =
-    "curl -fsSL https://raw.githubusercontent.com/herotomg/toms-tools/main/install.sh | bash";
+const UPDATE_COMMAND: &str = "tt update";
+const INSTALL_ACTION_ENV: &str = "TT_INSTALL_ACTION";
+const EMBEDDED_INSTALLER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/install.sh"));
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UpdateCache {
@@ -36,7 +39,12 @@ pub fn maybe_check(disabled_by_flag: bool, force_refresh: bool) {
     let _ = check_for_update(force_refresh);
 }
 
-fn check_for_update(force_refresh: bool) -> Result<(), ()> {
+pub fn run() -> Result<()> {
+    println!("Updating tt from the latest release...");
+    run_embedded_installer(EMBEDDED_INSTALLER)
+}
+
+fn check_for_update(force_refresh: bool) -> std::result::Result<(), ()> {
     let current_version = Version::parse(env!("CARGO_PKG_VERSION")).map_err(|_| ())?;
     let cache_path = cache_file_path().ok_or(())?;
     let now = now_secs().ok_or(())?;
@@ -140,6 +148,71 @@ fn update_check_disabled(disabled_by_flag: bool, env_value: Option<&str>) -> boo
     disabled_by_flag || matches!(env_value, Some("1"))
 }
 
+fn run_embedded_installer(script_contents: &str) -> Result<()> {
+    let temp_dir = temp_update_dir()?;
+    let result = run_embedded_installer_inner(script_contents, &temp_dir, run_installer_script);
+    let cleanup = fs::remove_dir_all(&temp_dir);
+
+    if let Err(err) = result {
+        cleanup.ok();
+        return Err(err);
+    }
+
+    cleanup.with_context(|| format!("failed to clean up {temp_dir:?}"))?;
+    Ok(())
+}
+
+fn run_embedded_installer_inner(
+    script_contents: &str,
+    temp_dir: &Path,
+    runner: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    let script_path = write_installer_script(temp_dir, script_contents)?;
+    runner(&script_path)
+}
+
+fn write_installer_script(temp_dir: &Path, script_contents: &str) -> Result<PathBuf> {
+    fs::create_dir_all(temp_dir).with_context(|| format!("failed to create {temp_dir:?}"))?;
+    let script_path = temp_dir.join("install.sh");
+    fs::write(&script_path, script_contents)
+        .with_context(|| format!("failed to write {script_path:?}"))?;
+    set_script_permissions(&script_path)?;
+    Ok(script_path)
+}
+
+#[cfg(unix)]
+fn set_script_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path)
+        .with_context(|| format!("failed to read metadata for {path:?}"))?
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions)
+        .with_context(|| format!("failed to set executable permissions on {path:?}"))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_script_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn run_installer_script(script_path: &Path) -> Result<()> {
+    let bash = which::which("bash").context("bash is required to update tt")?;
+    let status = Command::new(&bash)
+        .arg(script_path)
+        .env(INSTALL_ACTION_ENV, "Updated")
+        .status()
+        .with_context(|| format!("failed to run {script_path:?}"))?;
+
+    if !status.success() {
+        bail!("tt update failed")
+    }
+
+    Ok(())
+}
+
 fn cache_file_path() -> Option<PathBuf> {
     let home = env::var_os("HOME")?;
     Some(
@@ -155,6 +228,17 @@ fn now_secs() -> Option<u64> {
         .duration_since(UNIX_EPOCH)
         .ok()
         .map(|duration| duration.as_secs())
+}
+
+fn temp_update_dir() -> Result<PathBuf> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before unix epoch")?
+        .as_nanos();
+    Ok(env::temp_dir().join(format!(
+        "tt-update-{}-{unique}",
+        std::process::id()
+    )))
 }
 
 fn is_cache_fresh(now: u64, checked_at: u64) -> bool {
@@ -276,6 +360,24 @@ mod tests {
     }
 
     #[test]
+    fn run_embedded_installer_inner_writes_script_before_invoking_runner() {
+        let temp_dir = test_temp_dir("run_embedded_installer_inner_writes_script_before_invoking_runner");
+        let mut captured = None;
+        let script = "#!/usr/bin/env bash\necho hi\n";
+
+        run_embedded_installer_inner(script, &temp_dir, |path| {
+            captured = Some((path.to_path_buf(), fs::read_to_string(path).unwrap()));
+            Ok(())
+        })
+        .unwrap();
+
+        let (path, content) = captured.unwrap();
+        assert_eq!(path, temp_dir.join("install.sh"));
+        assert_eq!(content, script);
+        cleanup_test_dir(&temp_dir);
+    }
+
+    #[test]
     fn update_notice_is_omitted_when_not_newer() {
         let current = Version::parse("0.1.6").unwrap();
 
@@ -342,7 +444,15 @@ mod tests {
         env::temp_dir().join(format!("tt-update-test-{}-{name}.json", std::process::id()))
     }
 
+    fn test_temp_dir(name: &str) -> PathBuf {
+        env::temp_dir().join(format!("tt-update-test-dir-{}-{name}", std::process::id()))
+    }
+
     fn cleanup_test_cache(path: &Path) {
         let _ = fs::remove_file(path);
+    }
+
+    fn cleanup_test_dir(path: &Path) {
+        let _ = fs::remove_dir_all(path);
     }
 }

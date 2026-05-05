@@ -13,15 +13,15 @@ use crate::{commands, tools::Registry, update};
 pub struct Cli {
     #[arg(long, hide = true, global = true)]
     no_update_check: bool,
-    #[arg(long, global = true, conflicts_with = "no_update_check")]
-    /// Force a fresh update check instead of using the cached result
-    check_update: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Update tt to the latest released version
+    Update,
+
     Tools(ToolsArgs),
     Completions(commands::completions::CompletionsArgs),
 }
@@ -40,6 +40,9 @@ enum ToolsCommand {
     /// Install one or more tools
     Install(InstallArgs),
 
+    /// Update outdated bundled tools, or install/update explicit tool ids
+    Update(UpdateArgs),
+
     /// Show usage notes for installed tools or selected tool ids
     Usage(UsageArgs),
 }
@@ -57,6 +60,16 @@ pub struct InstallArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct UpdateArgs {
+    #[arg(value_name = "IDS", value_parser = tool_id_value_parser(), conflicts_with = "all")]
+    pub ids: Vec<String>,
+    #[arg(short, long)]
+    pub all: bool,
+    #[arg(short, long)]
+    pub verbose: bool,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct UsageArgs {
     #[arg(value_name = "IDS", value_parser = tool_id_value_parser())]
     pub ids: Vec<String>,
@@ -66,15 +79,19 @@ pub struct UsageArgs {
 
 pub fn run() -> Result<()> {
     let cli = parse();
-    update::maybe_check(cli.no_update_check, cli.check_update);
+    if !matches!(cli.command.as_ref(), Some(Commands::Update)) {
+        update::maybe_check(cli.no_update_check, false);
+    }
 
     match cli.command {
+        Some(Commands::Update) => update::run(),
         Some(Commands::Tools(args)) => {
             let registry = Registry::load()?;
 
             match args.command {
                 ToolsCommand::List => commands::list::run(&registry),
                 ToolsCommand::Install(args) => commands::install::run(&registry, &args),
+                ToolsCommand::Update(args) => commands::tools_update::run(&registry, &args),
                 ToolsCommand::Usage(args) => commands::usage::run(&registry, &args),
             }
         }
@@ -112,7 +129,7 @@ fn tool_id_value_parser() -> PossibleValuesParser {
 mod tests {
     use clap::Parser;
 
-    use super::{after_help, Cli, InstallArgs};
+    use super::{after_help, Cli, InstallArgs, UpdateArgs};
 
     #[test]
     fn allows_running_without_a_subcommand() {
@@ -134,18 +151,26 @@ mod tests {
         tools.write_long_help(&mut buffer).unwrap();
 
         let help = String::from_utf8(buffer).unwrap();
+        assert!(help.contains("update"));
         assert!(help.contains("usage"));
     }
 
     #[test]
-    fn help_documents_force_update_check_flag() {
+    fn help_lists_update_subcommand_and_hides_old_flag() {
         let mut command = super::command();
         let mut buffer = Vec::new();
         command.write_long_help(&mut buffer).unwrap();
 
         let help = String::from_utf8(buffer).unwrap();
-        assert!(help.contains("--check-update"));
-        assert!(help.contains("Force a fresh update check"));
+        assert!(help.contains("update"));
+        assert!(!help.contains("--check-update"));
+    }
+
+    #[test]
+    fn parses_update_subcommand() {
+        let cli = Cli::try_parse_from(["tt", "update"]).unwrap();
+
+        assert!(matches!(cli.command, Some(super::Commands::Update)));
     }
 
     #[test]
@@ -163,6 +188,28 @@ mod tests {
         assert!(matches!(
             args,
             InstallArgs {
+                all: true,
+                verbose: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn tools_update_args_support_verbose_flag() {
+        let cli = Cli::try_parse_from(["tt", "tools", "update", "--all", "-v"]).unwrap();
+
+        let args = match cli.command.unwrap() {
+            super::Commands::Tools(tools) => match tools.command {
+                super::ToolsCommand::Update(args) => args,
+                _ => panic!("expected update command"),
+            },
+            _ => panic!("expected tools command"),
+        };
+
+        assert!(matches!(
+            args,
+            UpdateArgs {
                 all: true,
                 verbose: true,
                 ..

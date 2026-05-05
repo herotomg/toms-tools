@@ -20,11 +20,12 @@ Useful follow-up commands:
 
 ```sh
 tt tools list
+tt tools update
 tt tools usage --all
-tt --check-update
+tt update
 ```
 
-Use `tt --check-update` to force a fresh update check instead of waiting for the cached daily check.
+Use `tt update` to update the CLI itself to the latest release.
 
 ## Tools
 
@@ -43,6 +44,8 @@ tt tools install gh-unresolved
 
 ```sh
 tt tools list
+tt tools update [id]
+tt tools update --all
 tt tools usage
 tt tools usage --all
 tt tools install [id]

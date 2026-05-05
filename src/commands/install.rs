@@ -21,16 +21,26 @@ pub fn run(registry: &Registry, args: &InstallArgs) -> Result<()> {
 
         match Status::detect(&tool.definition)? {
             Status::Installed => {
-                print_status_line('✓', &tool.definition.id, Some("already installed"), true);
+                print_status_line(
+                    '✓',
+                    &tool.definition.id,
+                    Some(action_suffix(Status::Installed)),
+                    true,
+                );
             }
-            Status::NotInstalled | Status::NeedsUpdate => {
+            status @ (Status::NotInstalled | Status::NeedsUpdate) => {
                 match installer::install(tool, args.verbose) {
                     Ok(()) => {
-                        print_status_line('✓', &tool.definition.id, None, true);
+                        print_status_line(
+                            '✓',
+                            &tool.definition.id,
+                            Some(action_suffix(status)),
+                            true,
+                        );
                         print!("{}", usage::render_post_install(tool)?);
                     }
                     Err(err) => {
-                        print_status_line('✗', &tool.definition.id, None, false);
+                        print_status_line('✗', &tool.definition.id, Some("failed"), false);
                         if !args.verbose {
                             if let Some(output) = indented(err.detail_output().unwrap_or("")) {
                                 print!("{output}");
@@ -59,7 +69,15 @@ pub fn run(registry: &Registry, args: &InstallArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_status_line(symbol: char, id: &str, suffix: Option<&str>, success: bool) {
+pub(crate) fn action_suffix(status: Status) -> &'static str {
+    match status {
+        Status::Installed => "already current",
+        Status::NotInstalled => "installed",
+        Status::NeedsUpdate => "updated",
+    }
+}
+
+pub(crate) fn print_status_line(symbol: char, id: &str, suffix: Option<&str>, success: bool) {
     let symbol = if success {
         symbol
             .to_string()
@@ -81,7 +99,7 @@ fn print_status_line(symbol: char, id: &str, suffix: Option<&str>, success: bool
     }
 }
 
-fn indented(output: &str) -> Option<String> {
+pub(crate) fn indented(output: &str) -> Option<String> {
     let trimmed = output.trim_end();
     if trimmed.is_empty() {
         return None;
@@ -131,7 +149,9 @@ fn resolve_requested_ids(registry: &Registry, args: &InstallArgs) -> Result<Vec<
 
 #[cfg(test)]
 mod tests {
-    use super::indented;
+    use crate::tools::status::Status;
+
+    use super::{action_suffix, indented};
 
     #[test]
     fn indented_prefixes_each_line() {
@@ -144,5 +164,12 @@ mod tests {
     #[test]
     fn indented_skips_empty_output() {
         assert_eq!(indented("\n"), None);
+    }
+
+    #[test]
+    fn action_suffix_matches_install_state() {
+        assert_eq!(action_suffix(Status::Installed), "already current");
+        assert_eq!(action_suffix(Status::NotInstalled), "installed");
+        assert_eq!(action_suffix(Status::NeedsUpdate), "updated");
     }
 }
