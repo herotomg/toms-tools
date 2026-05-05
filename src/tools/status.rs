@@ -133,18 +133,30 @@ mod tests {
 
     #[test]
     fn treats_older_recorded_version_as_needing_update() {
-        assert_eq!(status_from_recorded_version(Some("1.2.2"), "1.2.3"), Status::NeedsUpdate);
+        assert_eq!(
+            status_from_recorded_version(Some("1.2.2"), "1.2.3"),
+            Status::NeedsUpdate
+        );
     }
 
     #[test]
     fn treats_equal_or_newer_recorded_versions_as_installed() {
-        assert_eq!(status_from_recorded_version(Some("1.2.3"), "1.2.3"), Status::Installed);
-        assert_eq!(status_from_recorded_version(Some("1.2.4"), "1.2.3"), Status::Installed);
+        assert_eq!(
+            status_from_recorded_version(Some("1.2.3"), "1.2.3"),
+            Status::Installed
+        );
+        assert_eq!(
+            status_from_recorded_version(Some("1.2.4"), "1.2.3"),
+            Status::Installed
+        );
     }
 
     #[test]
     fn treats_missing_recorded_version_as_needing_update() {
-        assert_eq!(status_from_recorded_version(None, "1.2.3"), Status::NeedsUpdate);
+        assert_eq!(
+            status_from_recorded_version(None, "1.2.3"),
+            Status::NeedsUpdate
+        );
     }
 
     #[test]

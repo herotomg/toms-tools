@@ -235,10 +235,7 @@ fn temp_update_dir() -> Result<PathBuf> {
         .duration_since(UNIX_EPOCH)
         .context("system clock is before unix epoch")?
         .as_nanos();
-    Ok(env::temp_dir().join(format!(
-        "tt-update-{}-{unique}",
-        std::process::id()
-    )))
+    Ok(env::temp_dir().join(format!("tt-update-{}-{unique}", std::process::id())))
 }
 
 fn is_cache_fresh(now: u64, checked_at: u64) -> bool {
@@ -361,7 +358,8 @@ mod tests {
 
     #[test]
     fn run_embedded_installer_inner_writes_script_before_invoking_runner() {
-        let temp_dir = test_temp_dir("run_embedded_installer_inner_writes_script_before_invoking_runner");
+        let temp_dir =
+            test_temp_dir("run_embedded_installer_inner_writes_script_before_invoking_runner");
         let mut captured = None;
         let script = "#!/usr/bin/env bash\necho hi\n";
 

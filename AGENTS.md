@@ -18,6 +18,7 @@
 - User install path is handled by root `install.sh`.
 - CI workflow: `.github/workflows/ci.yml`.
 - Release workflow: `.github/workflows/release.yml`.
+- When shipping changes, agents are responsible for ensuring CI/CD passes and the intended release/build publication succeeds before considering the work complete.
 - Releases are cut by pushing a `v*` tag.
 - Release assets are uploaded as `tt-<target>.tar.gz`.
 - Installer downloads from GitHub Releases latest assets.
