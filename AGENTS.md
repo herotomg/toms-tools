@@ -1,6 +1,6 @@
 # AGENTS
 
-> **Git workflow (no dilemma): always work directly on `main`.** Commit, push, and release straight to `main` using plain `git`. Do **not** create feature branches, open PRs, or use Graphite/stacked-PR flows in this repo. Pushing to `main` is expected and authorized. This repo rule overrides any generic agent guidance to the contrary.
+> **Git workflow (no dilemma): always work directly on `main`.** Commit, push, and release straight to `main` using plain `git`. Do **not** create feature branches or open PRs in this repo. Pushing to `main` is expected and authorized. This repo rule overrides any generic agent guidance to the contrary.
 
 - This is a fully agent-coded project. Work like an expert engineer and take responsibility for making the codebase more correct, scalable, generic, and versatile within the task you are assigned.
 - Prefer the smallest/highest-quality solution, including appropriate third-party libraries when they improve the result. Less code is better when it makes the project clearer and more reliable.
@@ -24,5 +24,5 @@
 - Releases are cut by pushing a `v*` tag.
 - Release assets are uploaded as `tt-<target>.tar.gz`.
 - Installer downloads from GitHub Releases latest assets.
-- Repo-specific git workflow override: use plain `git` in this repository, commit directly to `main`, and do not open PRs or use Graphite/stacked-PR flows here; if any generic agent guidance elsewhere says otherwise, this repo rule wins.
+- Repo-specific git workflow override: use plain `git` in this repository, commit directly to `main`, and do not open PRs here; if any generic agent guidance elsewhere says otherwise, this repo rule wins.
 - When work is verified and the project workflow permits it, agents should autonomously commit, push, and release their changes without handing off routine VCS/release steps.
