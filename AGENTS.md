@@ -22,6 +22,7 @@
 - Release workflow: `.github/workflows/release.yml`.
 - When shipping changes, agents are responsible for ensuring CI/CD passes and the intended release/build publication succeeds before considering the work complete.
 - Releases are cut by pushing a `v*` tag.
+- Every GitHub release MUST have user-readable notes following `.github/RELEASE_NOTES_TEMPLATE.md` (same structure for all releases; keep the `📦 Upgrade` section verbatim). After the release workflow creates the release, set the notes with `gh release edit vX.Y.Z --notes-file <file> --title "vX.Y.Z — <summary>"`.
 - Release assets are uploaded as `tt-<target>.tar.gz`.
 - Installer downloads from GitHub Releases latest assets.
 - Repo-specific git workflow override: use plain `git` in this repository, commit directly to `main`, and do not open PRs here; if any generic agent guidance elsewhere says otherwise, this repo rule wins.
