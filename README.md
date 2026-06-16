@@ -32,7 +32,8 @@ Use `tt update` to update the CLI itself to the latest release.
 | Tool | Description |
 | --- | --- |
 | `gh-unresolved` | Install the `gh unresolved` command to list unresolved CR comments on a PR. |
-| `intent-pr-fixer` | Install the PR Fixer Intent specialist agent for one-shot CR comment fixing. |
+| `jsut-alias` | Install a zsh alias so a `jsut` typo runs `just`. |
+| `gtms-alias` | Install a zsh `gtms` alias for `gt modify && gt submit --stack`. |
 
 Install a single tool by id:
 

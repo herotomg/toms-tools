@@ -1,0 +1,6 @@
+id = "jsut-alias"
+name = "jsut → just alias"
+description = "Install a zsh alias so a `jsut` typo runs `just`."
+version = "1"
+depends = []
+status_check = "grep -Fq 'toms-tools:jsut-alias' \"${ZDOTDIR:-$HOME}/.zshrc\" 2>/dev/null"

@@ -1,0 +1,6 @@
+id = "gtms-alias"
+name = "gtms Graphite alias"
+description = "Install a zsh `gtms` alias for `gt modify && gt submit --stack`."
+version = "1"
+depends = []
+status_check = "grep -Fq 'toms-tools:gtms-alias' \"${ZDOTDIR:-$HOME}/.zshrc\" 2>/dev/null"
