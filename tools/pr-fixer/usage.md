@@ -1,13 +1,14 @@
 # PR Fixer (Claude Code)
 
-Installs a Claude Code agent and slash command that fix unresolved PR review comments in one pass.
+Installs a Claude Code slash command that fixes unresolved PR review comments in one pass — running inline in your main session (no subagent).
 
 ## What it installs
 
-- `~/.claude/agents/pr-fixer.md` — the `pr-fixer` agent (fixes the comments itself; does not delegate).
-- `~/.claude/commands/fix-pr.md` — the `/fix-pr` slash command that runs the agent.
+- `~/.claude/commands/fix-pr.md` — the `/fix-pr` slash command. It carries the full
+  instructions and runs directly in your session, so it uses your current model and context.
 
-Existing files are backed up before being overwritten.
+Existing files are backed up before being overwritten. A legacy `pr-fixer` agent from
+earlier versions, if present, is retired (backed up and removed).
 
 ## Usage
 

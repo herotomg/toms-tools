@@ -1,6 +1,6 @@
 id = "pr-fixer"
 name = "PR Fixer (Claude Code)"
-description = "Install the pr-fixer Claude Code agent and /fix-pr slash command."
-version = "1"
+description = "Install the /fix-pr slash command that fixes unresolved CR comments on the current PR."
+version = "2"
 depends = ["gh-unresolved"]
-status_check = "test -f \"$HOME/.claude/agents/pr-fixer.md\" && test -f \"$HOME/.claude/commands/fix-pr.md\""
+status_check = "test -f \"$HOME/.claude/commands/fix-pr.md\""
