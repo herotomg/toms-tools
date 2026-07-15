@@ -35,6 +35,7 @@ Use `tt update` to update the CLI itself to the latest release.
 | `jsut-alias` | Install a zsh alias so a `jsut` typo runs `just`. |
 | `gtms-alias` | Install a zsh `gtms` alias for `gt modify && gt submit --stack`. |
 | `pr-fixer` | Install the pr-fixer Claude Code agent and `/fix-pr` slash command. |
+| `agent-matrix` | Install the general-purpose Claude Code subagent as 15 model x effort variants (sonnet/opus/fable x low/medium/high/xhigh/max). |
 
 Install a single tool by id:
 

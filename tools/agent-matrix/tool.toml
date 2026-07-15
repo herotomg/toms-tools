@@ -1,0 +1,6 @@
+id = "agent-matrix"
+name = "General-Purpose Agent Matrix (Claude Code)"
+description = "Install model x effort variants of the general-purpose Claude Code subagent (sonnet/opus/fable x low/medium/high/xhigh/max)."
+version = "1"
+depends = []
+status_check = "for m in sonnet opus fable; do for e in low medium high xhigh max; do test -f \"$HOME/.claude/agents/general-purpose-$m-$e.md\" || exit 1; done; done"
