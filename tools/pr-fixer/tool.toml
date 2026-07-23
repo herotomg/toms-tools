@@ -1,6 +1,6 @@
 id = "pr-fixer"
 name = "PR Fixer (Claude Code)"
 description = "Install the /fix-pr slash command that fixes unresolved CR comments on the current PR."
-version = "2"
+version = "3"
 depends = ["gh-unresolved"]
 status_check = "test -f \"$HOME/.claude/commands/fix-pr.md\""

@@ -13,4 +13,4 @@ earlier versions, if present, is retired (backed up and removed).
 ## Usage
 
 - In Claude Code, run `/fix-pr` on the PR branch you want to fix (optionally pass a PR number).
-- It fetches unresolved comments via `gh unresolved`, fixes them, runs tests, then submits and replies.
+- It fetches unresolved comments via `gh unresolved`, fixes them, runs tests, then submits, replies, and resolves each addressed comment thread.
