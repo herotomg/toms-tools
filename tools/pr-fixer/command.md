@@ -4,6 +4,9 @@ description: Fetch unresolved CR comments on the current PR and fix them
 
 Fetch the unresolved code review comments on the current PR and fix them yourself, directly.
 
+**Multiple PRs / a PR stack**: If more than one PR is given (e.g. multiple PR numbers/URLs, or "fix the whole stack"), process them bottom to top — the PR with no unmerged parent first, ending with the topmost PR. Handle ONE PR at a time, fully, before moving to the next: fix → submit → reply+resolve for PR A, only then start PR B, and so on. Do not interleave work across PRs.
+For each PR in the stack, dispatch a subagent to run the full single-PR workflow below (steps 1-5) for that PR alone, so the fix/reply/resolve work for each PR doesn't pile up in your own context. Wait for each subagent to finish before dispatching the next one, since later PRs in the stack may depend on earlier ones being fixed and submitted first. After each subagent finishes, briefly confirm what it did before continuing to the next PR.
+
 Your job is to:
 
 1. Fetch unresolved CR comments -
