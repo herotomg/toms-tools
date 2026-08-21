@@ -1,12 +1,14 @@
 use std::{
     env, fs,
+    io::{self, IsTerminal},
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{bail, Context, Result};
-use owo_colors::OwoColorize;
+use dialoguer::Confirm;
+use owo_colors::{OwoColorize, Stream, Style};
 use semver::Version;
 use serde::Deserialize;
 
@@ -53,7 +55,7 @@ fn check_for_update(force_refresh: bool) -> std::result::Result<(), ()> {
         latest_release_for_update(&cache_path, now, force_refresh, fetch_latest_release_tag);
 
     if let Some(latest) = latest {
-        print_update_notice_if_newer(&current_version, &latest);
+        offer_update_if_newer(&current_version, &latest);
     }
 
     Ok(())
@@ -123,25 +125,94 @@ fn fetch_latest_release_tag() -> Option<String> {
         .map(|version| version.to_string())
 }
 
-fn print_update_notice_if_newer(current: &Version, latest: &str) {
-    let Some(notice) = update_notice(current, latest) else {
+fn offer_update_if_newer(current: &Version, latest: &str) {
+    let Some(latest) = newer_version(current, latest) else {
         return;
     };
 
-    eprintln!("{}", notice.yellow());
-}
+    eprintln!("{}", update_headline(current, &latest));
 
-fn update_notice(current: &Version, latest: &str) -> Option<String> {
-    let latest = Version::parse(latest).ok()?;
-
-    if latest > *current {
-        return Some(format!(
-            "tt v{} → v{} available.\nRun to update:\n{}",
-            current, latest, UPDATE_COMMAND
-        ));
+    if !prompt_is_interactive() {
+        eprintln!("{}", update_hint());
+        return;
     }
 
-    None
+    match confirm_update() {
+        Ok(true) => install_update_inline(&latest),
+        Ok(false) => eprintln!("{}", update_hint()),
+        // Ctrl-C / closed terminal: stay out of the way.
+        Err(_) => {}
+    }
+}
+
+fn install_update_inline(latest: &Version) {
+    eprintln!(
+        "{}",
+        format!("  Downloading tt v{latest}…")
+            .if_supports_color(Stream::Stderr, |text| text.dimmed())
+    );
+
+    match run_embedded_installer_quietly(EMBEDDED_INSTALLER) {
+        Ok(()) => eprintln!(
+            "{} tt v{latest} installed — it takes effect on your next command.\n",
+            success_mark()
+        ),
+        Err(err) => eprintln!(
+            "{} update failed: {err:#}\n{}\n",
+            failure_mark(),
+            update_hint()
+        ),
+    }
+}
+
+fn confirm_update() -> Result<bool> {
+    Ok(Confirm::new()
+        .with_prompt("Install it now?")
+        .default(true)
+        .interact()?)
+}
+
+fn prompt_is_interactive() -> bool {
+    io::stdin().is_terminal() && io::stderr().is_terminal()
+}
+
+fn newer_version(current: &Version, latest: &str) -> Option<Version> {
+    Version::parse(latest)
+        .ok()
+        .filter(|latest| latest > current)
+}
+
+fn update_headline(current: &Version, latest: &Version) -> String {
+    format!(
+        "{} tt v{} → {}",
+        "↑".if_supports_color(Stream::Stderr, |text| text
+            .style(Style::new().yellow().bold())),
+        current,
+        format!("v{latest}").if_supports_color(Stream::Stderr, |text| text
+            .style(Style::new().green().bold()))
+    )
+}
+
+fn update_hint() -> String {
+    let hint = format!("  Run `{UPDATE_COMMAND}` whenever you want it.");
+    format!(
+        "{}",
+        hint.if_supports_color(Stream::Stderr, |text| text.dimmed())
+    )
+}
+
+fn success_mark() -> String {
+    format!(
+        "{}",
+        "✓".if_supports_color(Stream::Stderr, |text| text.green())
+    )
+}
+
+fn failure_mark() -> String {
+    format!(
+        "{}",
+        "✗".if_supports_color(Stream::Stderr, |text| text.red())
+    )
 }
 
 fn update_check_disabled(disabled_by_flag: bool, env_value: Option<&str>) -> bool {
@@ -149,8 +220,19 @@ fn update_check_disabled(disabled_by_flag: bool, env_value: Option<&str>) -> boo
 }
 
 fn run_embedded_installer(script_contents: &str) -> Result<()> {
+    run_embedded_installer_with(script_contents, run_installer_script)
+}
+
+fn run_embedded_installer_quietly(script_contents: &str) -> Result<()> {
+    run_embedded_installer_with(script_contents, run_installer_script_quietly)
+}
+
+fn run_embedded_installer_with(
+    script_contents: &str,
+    runner: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
     let temp_dir = temp_update_dir()?;
-    let result = run_embedded_installer_inner(script_contents, &temp_dir, run_installer_script);
+    let result = run_embedded_installer_inner(script_contents, &temp_dir, runner);
     let cleanup = fs::remove_dir_all(&temp_dir);
 
     if let Err(err) = result {
@@ -199,10 +281,7 @@ fn set_script_permissions(_path: &Path) -> Result<()> {
 }
 
 fn run_installer_script(script_path: &Path) -> Result<()> {
-    let bash = which::which("bash").context("bash is required to update tt")?;
-    let status = Command::new(&bash)
-        .arg(script_path)
-        .env(INSTALL_ACTION_ENV, "Updated")
+    let status = installer_command(script_path)?
         .status()
         .with_context(|| format!("failed to run {script_path:?}"))?;
 
@@ -211,6 +290,33 @@ fn run_installer_script(script_path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Same install, but the download chatter is swallowed so an auto-update stays
+/// a single line unless something goes wrong.
+fn run_installer_script_quietly(script_path: &Path) -> Result<()> {
+    let output = installer_command(script_path)?
+        .output()
+        .with_context(|| format!("failed to run {script_path:?}"))?;
+
+    if !output.status.success() {
+        let details = String::from_utf8_lossy(&output.stderr);
+        let details = details.trim();
+        bail!(if details.is_empty() {
+            "tt update failed".to_owned()
+        } else {
+            details.to_owned()
+        })
+    }
+
+    Ok(())
+}
+
+fn installer_command(script_path: &Path) -> Result<Command> {
+    let bash = which::which("bash").context("bash is required to update tt")?;
+    let mut command = Command::new(bash);
+    command.arg(script_path).env(INSTALL_ACTION_ENV, "Updated");
+    Ok(command)
 }
 
 fn cache_file_path() -> Option<PathBuf> {
@@ -347,13 +453,18 @@ mod tests {
     }
 
     #[test]
-    fn update_notice_includes_version_line_and_install_command() {
+    fn update_headline_shows_both_versions() {
         let current = Version::parse("0.1.6").unwrap();
+        let latest = newer_version(&current, "9.9.9").unwrap();
 
-        let notice = update_notice(&current, "9.9.9").unwrap();
-        assert!(notice.contains("tt v0.1.6 → v9.9.9 available."));
-        assert!(notice.contains("Run to update:"));
-        assert!(notice.contains(UPDATE_COMMAND));
+        let headline = update_headline(&current, &latest);
+        assert!(headline.contains("tt v0.1.6"));
+        assert!(headline.contains("v9.9.9"));
+    }
+
+    #[test]
+    fn update_hint_points_at_the_update_command() {
+        assert!(update_hint().contains(UPDATE_COMMAND));
     }
 
     #[test]
@@ -376,11 +487,16 @@ mod tests {
     }
 
     #[test]
-    fn update_notice_is_omitted_when_not_newer() {
+    fn newer_version_is_none_when_not_newer() {
         let current = Version::parse("0.1.6").unwrap();
 
-        assert_eq!(update_notice(&current, "0.1.6"), None);
-        assert_eq!(update_notice(&current, "0.1.5"), None);
+        assert_eq!(newer_version(&current, "0.1.6"), None);
+        assert_eq!(newer_version(&current, "0.1.5"), None);
+        assert_eq!(newer_version(&current, "not-a-version"), None);
+        assert_eq!(
+            newer_version(&current, "0.1.7"),
+            Some(Version::parse("0.1.7").unwrap())
+        );
     }
 
     #[test]

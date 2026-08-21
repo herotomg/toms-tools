@@ -27,6 +27,9 @@ tt update
 
 Use `tt update` to update the CLI itself to the latest release.
 
+When a newer release exists, `tt` says so once a day and offers to install it right
+there (just press Enter). Set `TT_NO_UPDATE_CHECK=1` to turn the check off.
+
 ## Tools
 
 | Tool | Description |
