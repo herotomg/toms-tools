@@ -146,10 +146,10 @@ fn offer_update_if_newer(current: &Version, latest: &str) {
 }
 
 fn install_update_inline(latest: &Version) {
+    let downloading = format!("  Downloading tt v{latest}…");
     eprintln!(
         "{}",
-        format!("  Downloading tt v{latest}…")
-            .if_supports_color(Stream::Stderr, |text| text.dimmed())
+        downloading.if_supports_color(Stream::Stderr, |text| text.dimmed())
     );
 
     match run_embedded_installer_quietly(EMBEDDED_INSTALLER) {
@@ -183,12 +183,13 @@ fn newer_version(current: &Version, latest: &str) -> Option<Version> {
 }
 
 fn update_headline(current: &Version, latest: &Version) -> String {
+    let latest = format!("v{latest}");
     format!(
         "{} tt v{} → {}",
         "↑".if_supports_color(Stream::Stderr, |text| text
             .style(Style::new().yellow().bold())),
         current,
-        format!("v{latest}").if_supports_color(Stream::Stderr, |text| text
+        latest.if_supports_color(Stream::Stderr, |text| text
             .style(Style::new().green().bold()))
     )
 }

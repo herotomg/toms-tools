@@ -220,6 +220,7 @@ impl ShellConfig {
     }
 
     fn header_comment(&self) -> String {
+        let install = format!("tt completions install {}", self.name);
         format!(
             concat!(
                 "# tt completions for {shell}\n",
@@ -232,7 +233,7 @@ impl ShellConfig {
             ),
             shell = self.name,
             session = self.session_command,
-            install = format!("tt completions install {}", self.name),
+            install = install,
             rc_file = self.rc_file,
             source_file = self.file_source_command,
         )
