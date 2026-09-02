@@ -84,17 +84,22 @@ pub fn run(registry: &Registry, request: &Request) -> Result<()> {
     Ok(())
 }
 
-/// The whole point of `next_steps`: after installing, say the one thing to do,
-/// not the tool's entire manual. The manual is one command away.
+/// The whole point of `next_steps`: after installing, say the thing to do, not
+/// the tool's entire manual. The manual is one command away.
+///
+/// A tool may give several lines when its install cannot finish itself. Only
+/// the first sits on the tool's own row; the rest are indented under it, so a
+/// multi-step setup still reads as belonging to one tool.
 fn print_next_steps(installed: &[&EmbeddedTool]) {
-    let steps: Vec<(&str, &str)> = installed
+    let steps: Vec<(&str, &[String])> = installed
         .iter()
         .filter_map(|tool| {
             tool.definition
                 .next_steps
-                .as_deref()
-                .map(|next| (tool.definition.id.as_str(), next))
+                .as_ref()
+                .map(|next| (tool.definition.id.as_str(), next.lines()))
         })
+        .filter(|(_, lines)| !lines.is_empty())
         .collect();
 
     if steps.is_empty() {
@@ -102,16 +107,22 @@ fn print_next_steps(installed: &[&EmbeddedTool]) {
     }
 
     let id_width = steps.iter().map(|(id, _)| id.len()).max().unwrap_or(0);
-    let room = ui::width().saturating_sub(id_width + 5);
+    let room = ui::width().saturating_sub(id_width + 6);
 
     println!();
     println!("  {}", ui::heading("Next steps"));
-    for (id, next) in steps {
-        println!(
-            "    {:<id_width$}  {}",
-            ui::tool_id(id),
-            ui::truncate(next, room)
-        );
+    for (id, lines) in steps {
+        for (index, line) in lines.iter().enumerate() {
+            // Pad on the *visible* width: `{:<width$}` counts the ANSI escape
+            // bytes in a coloured id, which pads the column short.
+            let label = if index == 0 {
+                let pad = " ".repeat(id_width - id.chars().count());
+                format!("{}{pad}", ui::tool_id(id))
+            } else {
+                " ".repeat(id_width)
+            };
+            println!("    {label}  {}", ui::truncate(line, room));
+        }
     }
 
     println!();

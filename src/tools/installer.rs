@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, Result};
 use include_dir::Dir;
 
-use super::{status, EmbeddedTool};
+use super::{status, upstream, EmbeddedTool};
 
 #[derive(Debug)]
 pub enum InstallError {
@@ -58,6 +58,9 @@ impl InstallError {
 pub fn install(tool: &EmbeddedTool, verbose: bool) -> std::result::Result<(), InstallError> {
     run_script(tool, "install.sh", verbose)?;
     status::write_installed_version(&tool.definition.id, &tool.definition.version)?;
+    // Ask again now that the install has happened. Whatever the daily check
+    // recorded was measured before this ran, and is about to be wrong.
+    upstream::recheck(tool);
     Ok(())
 }
 
@@ -70,6 +73,40 @@ pub fn run_hook(
     verbose: bool,
 ) -> std::result::Result<(), InstallError> {
     run_script(tool, script_name, verbose)
+}
+
+/// Run a hook for its *output* rather than its effect, returning stdout.
+///
+/// A non-zero exit yields `None`, not an error: `update-check.sh` is allowed to
+/// fail — the network is down, a host is unreachable — and "we could not tell"
+/// must never read as "an update is waiting".
+pub fn capture_hook(tool: &EmbeddedTool, script_name: &str) -> Option<String> {
+    let temp_dir = create_temp_dir(&tool.definition.id).ok()?;
+    let output = capture_hook_inner(tool, script_name, &temp_dir);
+    let _ = fs::remove_dir_all(&temp_dir);
+    output
+}
+
+fn capture_hook_inner(tool: &EmbeddedTool, script_name: &str, temp_dir: &Path) -> Option<String> {
+    extract_dir(tool.dir(), temp_dir).ok()?;
+
+    let bash = which::which("bash").ok()?;
+    let output = Command::new(&bash)
+        .arg(temp_dir.join(script_name))
+        .current_dir(temp_dir)
+        .output()
+        .ok()?;
+
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub fn has_hook(tool: &EmbeddedTool, script_name: &str) -> bool {
+    tool.dir()
+        .get_file(tool.dir().path().join(script_name))
+        .is_some()
 }
 
 fn run_script(

@@ -58,6 +58,10 @@ this table is deliberately not a second copy of them.
 
 - **`artifacts`** — publish Markdown or HTML to your tailnet as a page teammates
   can read and comment on. Bundles the `art` CLI and two agent skills.
+- **`paseo-defer`** — a Paseo plugin that queues a message to an agent for
+  later, or for when your usage window resets.
+- **`send-to-paseo`** — start a Paseo agent on the pull request you are looking
+  at. Installs the Paseo plugin and the browser extension from one release.
 - **`preview-gif`** — record preview GIFs of a UI with a visible cursor and
   clicks. Bundles the `screengif` recorder.
 - **`agent-matrix`** — the general-purpose Claude Code subagent in 15 model ×
@@ -76,9 +80,15 @@ this table is deliberately not a second copy of them.
 | `~/.local/share/toms-tools/<id>/` | each tool's payload |
 | `~/.local/share/toms-tools/installed.toml` | recorded versions |
 | `~/.local/share/toms-tools/backups/` | anything replaced during an install |
+| `~/.cache/toms-tools/tool_updates.toml` | daily upstream-release checks |
 | `~/.claude/skills/`, `~/.codex/skills/` | skills, symlinked to the payload |
 
 Skills are symlinked rather than copied, so both agent hosts read the same files.
+
+Tools that install someone else's GitHub release — the two Paseo plugins — are
+pinned to a release rather than tracking a branch, and `tt` checks once a day
+whether a newer one exists. That is what makes them show up under **Updates
+available** without any command being slower.
 
 ## Development
 

@@ -1,0 +1,41 @@
+id = "send-to-paseo"
+name = "Send to Paseo"
+description = "Start a Paseo agent on the pull request you are looking at, from GitHub or Graphite."
+version = "1"
+
+# This is the one install that cannot finish itself: Chrome will only load an
+# unpacked extension by hand, and the two halves have to be paired once.
+next_steps = [
+  "1. Open chrome://extensions, turn on Developer mode, Load unpacked:",
+  "   ~/.local/share/toms-tools/send-to-paseo/extension",
+  "2. Copy the pairing token from Paseo's Send to Paseo sidebar",
+  "3. Click the extension's icon, paste the token, press Test connection",
+]
+
+# Two halves, and the tool only works with both: the plugin's state lives in
+# Paseo's own config, and the extension is a directory we unpack. `installs`
+# alone cannot express the first, so both are checked here.
+status_check = '''grep -q '"send-to-paseo": *{' "${PASEO_HOME:-$HOME/.paseo}/config.json" 2>/dev/null && [ -f "$HOME/.local/share/toms-tools/send-to-paseo/extension/manifest.json" ]'''
+
+# The extension half is ours to delete; the plugin half needs uninstall.sh.
+installs = ["~/.local/share/toms-tools/send-to-paseo"]
+
+[[requires]]
+command = "paseo"
+fix = "brew install --cask paseo"
+why = "hosts the plugin the extension talks to"
+
+[[requires]]
+command = "git"
+fix = "xcode-select --install"
+why = "reads which branch each workspace is on"
+
+[[requires]]
+command = "curl"
+fix = "brew install curl"
+why = "downloads the extension"
+
+[[requires]]
+command = "unzip"
+fix = "brew install unzip"
+why = "unpacks the extension"

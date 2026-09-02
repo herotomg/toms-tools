@@ -3,7 +3,11 @@ use clap::{
     builder::PossibleValuesParser, Args, CommandFactory, FromArgMatches, Parser, Subcommand,
 };
 
-use crate::{commands, tools::Registry, update};
+use crate::{
+    commands,
+    tools::{upstream, Registry},
+    update,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "tt")]
@@ -104,9 +108,11 @@ pub struct UsageArgs {
 pub fn run() -> Result<()> {
     let cli = parse();
 
+    let is_update = matches!(cli.command.as_ref(), Some(Commands::Update(_)));
+
     // The update command does its own checking; everywhere else this is the
     // once-a-day nudge.
-    if !matches!(cli.command.as_ref(), Some(Commands::Update(_))) {
+    if !is_update {
         update::maybe_check(cli.no_update_check, false);
     }
 
@@ -116,6 +122,14 @@ pub fn run() -> Result<()> {
     };
 
     let registry = Registry::load()?;
+
+    // Tools that track someone else's releases can only be told they are
+    // behind by asking. This is the one place that costs a network call, and
+    // it is rate-limited to once a day per tool — `tt update` forces it,
+    // because typing it is a request to look now.
+    if !cli.no_update_check && !update_check_disabled_by_env() {
+        upstream::refresh(&registry, is_update);
+    }
 
     match command {
         Some(Commands::Install(args)) => commands::install::run(
@@ -175,6 +189,10 @@ fn parse() -> Cli {
 
 fn after_help() -> String {
     "Run tt with no arguments and it will show you what needs doing.".to_owned()
+}
+
+fn update_check_disabled_by_env() -> bool {
+    matches!(std::env::var("TT_NO_UPDATE_CHECK").as_deref(), Ok("1"))
 }
 
 fn tool_id_value_parser() -> PossibleValuesParser {

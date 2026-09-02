@@ -58,7 +58,9 @@ fn print_summary(selected: &[(&EmbeddedTool, Status)]) {
         println!("  {} {}", ui::status_dot(*status), ui::bold(&tool.name));
         println!("    {}", ui::dim(&ui::truncate(&tool.description, room)));
         if let Some(next) = &tool.next_steps {
-            println!("    {}", ui::truncate(next, room));
+            for line in next.lines() {
+                println!("    {}", ui::truncate(line, room));
+            }
         }
         println!(
             "    {}",

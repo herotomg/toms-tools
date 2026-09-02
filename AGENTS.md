@@ -18,8 +18,11 @@
   2. Add `tools/<id>/install.sh`.
   3. Add `tools/<id>/usage.md`, opening with a `# Title` line.
   4. Add `tools/<id>/uninstall.sh` **only** if the tool's state is not a set of
-     paths (a shell alias, a `gh` alias). Path-based tools need no hook.
-  5. Verify with `cargo run -- list` and `cargo test` — the registry tests
+     paths (a shell alias, a `gh` alias, a plugin registered with another app).
+     Path-based tools need no hook.
+  5. Add `tools/<id>/update-check.sh` only if the version that matters lives
+     somewhere `tt` cannot see — see below.
+  6. Verify with `cargo run -- list` and `cargo test` — the registry tests
      validate every manifest, so a mistake fails CI rather than the user.
 - `tool.toml` schema. Prefer `installs` to `status_check`: it is checked without
   spawning a shell, and it is what `tt remove` deletes.
@@ -31,6 +34,9 @@
   version = "1"               # bump on any change to the tool's payload
   depends = []                # other bundled tool ids
   next_steps = "The single thing to do after installing, in one line."
+  # Or, only when the install genuinely cannot finish itself (loading a browser
+  # extension by hand, pasting a token), an ordered few — max 4, one line each:
+  # next_steps = ["1. Do this", "2. Then this"]
 
   installs = ["~/.local/bin/example"]   # presence of these == installed
   cleans   = ["~/.claude/skills/example"]  # also deleted, but may not exist
@@ -46,6 +52,25 @@
 - Anything a tool needs from the outside world goes in `[[requires]]`, not a
   `command -v` check inside `install.sh`. Only the manifest lets `tt` report it
   later and offer the fix.
+- `update-check.sh` is how a tool tracking *someone else's* releases reports
+  being behind. Bundled payloads need no such thing: `version` in the manifest
+  is the whole truth. A tool that installs a GitHub release does not have that
+  luxury, so it ships this hook, which prints **one line when an update is
+  waiting** and **nothing when it is current**. A non-zero exit means "could
+  not tell" and is never reported as an update — the previous answer stands.
+  `tt` runs it at most once a day, concurrently, and caches the result in
+  `~/.cache/toms-tools/tool_updates.toml`, so `tt` and `tt list` stay free of
+  network calls. `tt update` forces a fresh run, and a successful install
+  re-runs the tool's own check immediately so it cannot go on claiming to be
+  behind.
+- A tool whose state lives inside **another application's** config must treat
+  install and uninstall symmetrically. If `install.sh` declines to touch
+  something the user set up themselves — a Paseo plugin running from their own
+  checkout — then `uninstall.sh` must decline to delete it too, or `tt remove`
+  destroys a setup `tt install` promised to leave alone.
+- `include_dir!` embeds `tools/` at **compile time**. Editing an `install.sh`
+  and then running `./target/debug/tt` without rebuilding runs the *old* script.
+  Always `cargo build` before testing a tool script through the binary.
 - The installer extracts embedded files **without their mode bits**, so an
   `install.sh` that ships a binary must `chmod +x` it. The extraction directory
   is deleted afterwards, so copy payloads somewhere permanent —

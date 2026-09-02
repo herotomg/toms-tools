@@ -8,7 +8,7 @@ use std::{env, path::PathBuf};
 
 use anyhow::Result;
 
-use super::{status::Status, EmbeddedTool, Registry, Requirement};
+use super::{status::Status, upstream, EmbeddedTool, Registry, Requirement};
 
 /// Where we link binaries. If this is not on `$PATH`, tools install fine and
 /// then appear not to exist, which is the most confusing failure available.
@@ -19,6 +19,8 @@ pub struct ToolState<'a> {
     pub status: Status,
     /// Declared external commands that are not on `$PATH`.
     pub missing: Vec<&'a Requirement>,
+    /// Why an upstream release leaves this tool behind, when one does.
+    pub upstream: Option<String>,
 }
 
 impl ToolState<'_> {
@@ -29,6 +31,17 @@ impl ToolState<'_> {
     /// Installed, but unable to actually run.
     pub fn is_blocked(&self) -> bool {
         self.status.is_installed() && !self.missing.is_empty()
+    }
+
+    /// The one thing worth saying about this tool on a single line.
+    ///
+    /// An upstream release it is behind wins over the description: in a list
+    /// headed "Updates available", `v1.0.0 → v1.1.0` is what you came to find
+    /// out, and the description is a `tt usage` away.
+    pub fn detail(&self) -> &str {
+        self.upstream
+            .as_deref()
+            .unwrap_or(&self.tool.definition.description)
     }
 }
 
@@ -41,8 +54,11 @@ impl<'a> Survey<'a> {
     pub fn run(registry: &'a Registry) -> Result<Self> {
         let mut tools = Vec::new();
 
+        // Read once for the whole pass rather than per tool.
+        let upstream = upstream::cached();
+
         for tool in registry.tools() {
-            let status = Status::detect(&tool.definition)?;
+            let status = Status::detect_with(&tool.definition, &upstream)?;
             // Only report missing dependencies for tools the user actually has.
             // Listing what an uninstalled tool would need is noise.
             let missing = if status.is_installed() {
@@ -55,6 +71,7 @@ impl<'a> Survey<'a> {
                 tool,
                 status,
                 missing,
+                upstream: upstream.detail(&tool.definition.id).map(str::to_owned),
             });
         }
 

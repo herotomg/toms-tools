@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
-use super::{paths, Requirement, Tool};
+use super::{paths, upstream, Requirement, Tool};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -34,15 +34,32 @@ impl Status {
     }
 
     pub fn detect(tool: &Tool) -> Result<Self> {
+        Self::detect_with(tool, &upstream::cached())
+    }
+
+    /// Detect against an already-loaded upstream cache, for callers surveying
+    /// every tool at once.
+    ///
+    /// The upstream answer is folded in *here*, rather than in each command,
+    /// so that "needs update" means the same thing everywhere: a tool tracking
+    /// someone else's release is behind when that release moves, even though
+    /// its recorded version still matches the manifest we ship.
+    pub fn detect_with(tool: &Tool, upstream: &upstream::Cache) -> Result<Self> {
         if !is_present(tool)? {
             return Ok(Self::NotInstalled);
         }
 
         let installed = read_installed_state()?;
-        Ok(status_from_recorded_version(
+        let status = status_from_recorded_version(
             installed.tools.get(&tool.id).map(String::as_str),
             &tool.version,
-        ))
+        );
+
+        if matches!(status, Self::Installed) && upstream.has_update(&tool.id) {
+            return Ok(Self::NeedsUpdate);
+        }
+
+        Ok(status)
     }
 
     pub fn is_installed(self) -> bool {

@@ -121,10 +121,7 @@ fn print_tool_line(state: &ToolState<'_>) {
         "    {} {:<16} {}",
         ui::status_dot(state.status),
         ui::tool_id(state.id()),
-        ui::dim(&ui::truncate(
-            &state.tool.definition.description,
-            description_width
-        ))
+        ui::dim(&ui::truncate(state.detail(), description_width))
     );
 }
 

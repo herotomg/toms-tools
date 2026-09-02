@@ -4,6 +4,7 @@ pub mod paths;
 pub mod remover;
 pub mod status;
 pub mod survey;
+pub mod upstream;
 pub mod usage;
 
 use std::collections::BTreeMap;
@@ -52,9 +53,32 @@ pub struct Tool {
     /// Escape hatch for tools whose installed state is not a set of paths — a
     /// `gh` alias, a line in `.zshrc`. Takes precedence over `installs`.
     pub status_check: Option<String>,
-    /// The one thing to do next, in a single line. Shown after install instead
-    /// of the tool's whole manual.
-    pub next_steps: Option<String>,
+    /// What to do next, shown after install instead of the tool's whole manual.
+    /// Almost always one line; see [`NextSteps`].
+    pub next_steps: Option<NextSteps>,
+}
+
+/// The follow-up a tool needs after installing.
+///
+/// One line is the rule, and the schema keeps it the easy case. The exception
+/// is a tool whose install genuinely cannot finish itself — `send-to-paseo`
+/// ends with a Chrome extension to load by hand and a token to paste, and no
+/// single line can carry that. Those tools give an ordered list instead, and
+/// each entry is still held to one line.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum NextSteps {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl NextSteps {
+    pub fn lines(&self) -> &[String] {
+        match self {
+            Self::One(line) => std::slice::from_ref(line),
+            Self::Many(lines) => lines,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -179,6 +203,44 @@ impl Registry {
     }
 }
 
+#[cfg(test)]
+mod next_steps_tests {
+    use super::{NextSteps, Tool};
+
+    fn parse(next_steps: &str) -> Tool {
+        let manifest = format!(
+            "id = \"t\"\nname = \"T\"\ndescription = \"d\"\nversion = \"1\"\n\
+             status_check = \"true\"\nnext_steps = {next_steps}\n"
+        );
+        toml::from_str(&manifest).expect("manifest should parse")
+    }
+
+    /// One line stays the easy, untyped case.
+    #[test]
+    fn a_bare_string_is_one_step() {
+        let tool = parse("\"Run it.\"");
+        assert!(matches!(tool.next_steps, Some(NextSteps::One(_))));
+        assert_eq!(tool.next_steps.unwrap().lines(), ["Run it.".to_owned()]);
+    }
+
+    #[test]
+    fn a_list_keeps_its_order() {
+        let tool = parse("[\"1. first\", \"2. second\"]");
+        assert_eq!(
+            tool.next_steps.unwrap().lines(),
+            ["1. first".to_owned(), "2. second".to_owned()]
+        );
+    }
+
+    #[test]
+    fn absent_next_steps_stay_absent() {
+        let manifest = "id = \"t\"\nname = \"T\"\ndescription = \"d\"\n\
+                        version = \"1\"\nstatus_check = \"true\"\n";
+        let tool: Tool = toml::from_str(manifest).unwrap();
+        assert!(tool.next_steps.is_none());
+    }
+}
+
 /// These tests load the *real* bundled registry. Without them a malformed
 /// tool.toml — a bad id, a dangling dependency, a status check that will not
 /// parse — ships green, because every other test builds its own fixtures and
@@ -270,21 +332,60 @@ mod registry_tests {
         }
     }
 
+    /// Every shell script a tool ships, not just install.sh — an uninstall or
+    /// update-check hook that will not parse fails at the worst possible time,
+    /// and only when somebody happens to trigger it.
     #[test]
-    fn every_install_script_parses_as_bash() {
-        for tool in registry().tools() {
-            let path = tool.dir().path().join("install.sh");
-            let script = tool
-                .dir()
-                .get_file(&path)
-                .unwrap_or_else(|| panic!("{} is missing install.sh", tool.definition.id))
-                .contents_utf8()
-                .unwrap_or_else(|| panic!("{}'s install.sh is not UTF-8", tool.definition.id));
+    fn every_shipped_script_parses_as_bash() {
+        let mut checked = 0;
 
-            if let Err(error) = parses_as_bash(script) {
-                panic!(
-                    "{} has an unparseable install.sh: {error}",
-                    tool.definition.id
+        for tool in registry().tools() {
+            for file in tool.dir().files() {
+                let name = file.path().file_name().and_then(|name| name.to_str());
+                if !name.is_some_and(|name| name.ends_with(".sh")) {
+                    continue;
+                }
+
+                let script = file
+                    .contents_utf8()
+                    .unwrap_or_else(|| panic!("{}'s {name:?} is not UTF-8", tool.definition.id));
+
+                if let Err(error) = parses_as_bash(script) {
+                    panic!(
+                        "{} has an unparseable {}: {error}",
+                        tool.definition.id,
+                        name.unwrap_or("script")
+                    );
+                }
+                checked += 1;
+            }
+        }
+
+        // Guard against the loop silently matching nothing.
+        assert!(
+            checked >= registry().tool_ids().len(),
+            "only {checked} scripts"
+        );
+    }
+
+    /// The hook is what lets a tool tracking someone else's releases be told it
+    /// is behind. It is only ever run for its stdout, so a tool that ships one
+    /// must not need arguments or a terminal.
+    #[test]
+    fn update_check_hooks_are_named_as_the_runner_expects() {
+        for tool in registry().tools() {
+            let declared = tool
+                .dir()
+                .files()
+                .filter_map(|file| file.path().file_name().and_then(|name| name.to_str()))
+                .any(|name| name == super::upstream::HOOK);
+
+            if declared {
+                assert!(
+                    super::installer::has_hook(tool, super::upstream::HOOK),
+                    "{} ships {} but the runner cannot find it",
+                    tool.definition.id,
+                    super::upstream::HOOK
                 );
             }
         }
@@ -310,8 +411,8 @@ mod registry_tests {
         }
     }
 
-    /// `next_steps` is printed as one aligned line after an install. Anything
-    /// much longer than this is truncated, which means the useful half is lost.
+    /// Each `next_steps` entry is printed as one aligned line after an install.
+    /// Anything much longer is truncated, which means the useful half is lost.
     #[test]
     fn next_steps_fit_on_one_line() {
         for tool in registry().tools() {
@@ -319,15 +420,39 @@ mod registry_tests {
                 continue;
             };
             assert!(
-                next.chars().count() <= 72,
-                "{}: next_steps is {} chars, keep it under 72",
-                tool.definition.id,
-                next.chars().count()
-            );
-            assert!(
-                !next.contains('\n'),
-                "{}: next_steps must be a single line",
+                !next.lines().is_empty(),
+                "{}: next_steps is present but empty",
                 tool.definition.id
+            );
+            for line in next.lines() {
+                assert!(
+                    line.chars().count() <= 72,
+                    "{}: a next_steps line is {} chars, keep it under 72",
+                    tool.definition.id,
+                    line.chars().count()
+                );
+                assert!(
+                    !line.contains('\n'),
+                    "{}: each next_steps entry must be a single line",
+                    tool.definition.id
+                );
+            }
+        }
+    }
+
+    /// The multi-line form exists for installs that cannot finish themselves,
+    /// not as a licence to dump a manual. Two or three steps is the budget.
+    #[test]
+    fn next_steps_lists_stay_short() {
+        for tool in registry().tools() {
+            let Some(next) = &tool.definition.next_steps else {
+                continue;
+            };
+            assert!(
+                next.lines().len() <= 4,
+                "{}: {} next_steps entries; put the rest in usage.md",
+                tool.definition.id,
+                next.lines().len()
             );
         }
     }

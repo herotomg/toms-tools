@@ -60,10 +60,7 @@ fn print_row(state: &ToolState<'_>) {
         "    {} {:<id_width$} {}",
         ui::status_dot(state.status),
         ui::tool_id(state.id()),
-        ui::dim(&ui::truncate(
-            &state.tool.definition.description,
-            description_width
-        )),
+        ui::dim(&ui::truncate(state.detail(), description_width)),
     );
 
     // A tool that is installed but cannot run is the thing most worth knowing,

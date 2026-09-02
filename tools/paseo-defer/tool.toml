@@ -1,0 +1,21 @@
+id = "paseo-defer"
+name = "Paseo Defer"
+description = "Queue a message to a Paseo agent for later, or for when your usage window resets."
+version = "1"
+next_steps = "Open a Paseo session and press the Defer pill above the composer."
+
+# Paseo owns this plugin's state: it records configured plugins under `plugins`
+# in its own config, and clones the source itself. There are no paths of ours to
+# check, so this reads Paseo's config rather than the daemon — `paseo plugin ls`
+# is correct too, but it costs a daemon round trip on every `tt` and `tt list`.
+status_check = '''grep -q '"paseo-defer": *{' "${PASEO_HOME:-$HOME/.paseo}/config.json" 2>/dev/null'''
+
+[[requires]]
+command = "paseo"
+fix = "brew install --cask paseo"
+why = "hosts the plugin and delivers the deferred messages"
+
+[[requires]]
+command = "curl"
+fix = "brew install curl"
+why = "looks up the newest release"

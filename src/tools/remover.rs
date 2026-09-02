@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use anyhow::{Context, Result};
 
-use super::{installer, paths, status, EmbeddedTool};
+use super::{installer, paths, status, upstream, EmbeddedTool};
 
 /// What removing a tool actually did, so the caller can report it honestly
 /// rather than claiming success for a no-op.
@@ -51,6 +51,7 @@ pub fn remove(tool: &EmbeddedTool, verbose: bool) -> Result<Removal> {
     }
 
     status::forget_installed_version(&tool.definition.id)?;
+    upstream::forget(&tool.definition.id);
     Ok(removal)
 }
 
