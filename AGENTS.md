@@ -75,6 +75,13 @@
   `install.sh` that ships a binary must `chmod +x` it. The extraction directory
   is deleted afterwards, so copy payloads somewhere permanent —
   `~/.local/share/toms-tools/<id>/` by convention — and symlink from there.
+- **Never look up a release through `api.github.com`.** It caps unauthenticated
+  callers at 60 requests an hour *per IP*, so one busy office address exhausts
+  it and every probe comes back empty — which `tt` cannot distinguish from
+  "nothing newer exists", so it silently stops offering updates. Read the 302
+  from `https://github.com/<repo>/releases/latest` instead, which is not
+  rate-limited; `src/update.rs` and both `update-check.sh` hooks do this, and a
+  test pins it.
 - Local install for development: `cargo install --path .`.
 - CLI shape: `tt` bare is the guided front door and should stay the only thing a
   user needs to know. `tt install|update|remove|list|usage` are the flat commands;

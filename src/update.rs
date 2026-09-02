@@ -10,13 +10,20 @@ use anyhow::{bail, Context, Result};
 use dialoguer::Confirm;
 use owo_colors::{OwoColorize, Stream, Style};
 use semver::Version;
-use serde::Deserialize;
 
 const CACHE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
-const UPDATE_URL: &str = "https://api.github.com/repos/herotomg/toms-tools/releases/latest";
+/// Deliberately github.com, not api.github.com. The API caps unauthenticated
+/// callers at 60 requests an hour *per IP* — shared by everyone behind one
+/// office or VPN address — and when that runs out the probe comes back empty
+/// and `tt` silently concludes there is nothing newer. This URL answers with a
+/// 302 to the release tag and is not subject to that limit.
+const UPDATE_URL: &str = "https://github.com/herotomg/toms-tools/releases/latest";
 const UPDATE_DISABLE_ENV: &str = "TT_NO_UPDATE_CHECK";
 const UPDATE_COMMAND: &str = "tt update";
 const INSTALL_ACTION_ENV: &str = "TT_INSTALL_ACTION";
+/// Set on the process we hand over to after replacing the binary, so the new
+/// one does not check for an update again and hand over once more.
+const SELF_UPDATED_ENV: &str = "TT_SELF_UPDATED";
 const EMBEDDED_INSTALLER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/install.sh"));
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,11 +32,6 @@ struct UpdateCache {
     /// `None` means "we checked and came back empty" — an unreachable network,
     /// usually. It is still a real result: it stops us probing again for a day.
     latest: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LatestRelease {
-    tag_name: String,
 }
 
 pub fn maybe_check(disabled_by_flag: bool, force_refresh: bool) {
@@ -43,14 +45,73 @@ pub fn maybe_check(disabled_by_flag: bool, force_refresh: bool) {
     let _ = check_for_update(force_refresh);
 }
 
-/// Update the binary only when there is actually something newer, staying
-/// silent otherwise. `tt update` calls this before updating tools, so one
-/// command makes the whole installation current.
+/// What `tt update` managed to do about the binary itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfUpdate {
+    /// Already current, or the user declined.
+    NothingToDo,
+    /// A newer `tt` is now on disk. This process is still the old one.
+    Installed,
+    /// We could not find out what the newest release is.
+    CouldNotCheck,
+}
+
+/// True in the process we handed over to, which must not check again.
+pub fn self_update_already_handled() -> bool {
+    env::var_os(SELF_UPDATED_ENV).is_some()
+}
+
+/// Update the binary when there is something newer. `tt update` calls this
+/// before updating tools, so one command makes the whole installation current.
 ///
 /// Forces a fresh check: someone typing `tt update` is asking us to look now,
-/// not to consult a cache that may be up to a day old.
-pub fn update_self_if_newer() {
-    let _ = check_for_update(true);
+/// not to consult a cache that may be up to a day old. And unlike the passive
+/// nudge, a check that *fails* says so — staying quiet there reads as "you are
+/// up to date", which is the one thing it does not mean.
+pub fn update_self_if_newer() -> SelfUpdate {
+    let Ok(current) = Version::parse(env!("CARGO_PKG_VERSION")) else {
+        return SelfUpdate::CouldNotCheck;
+    };
+    let Some(cache_path) = cache_file_path() else {
+        return SelfUpdate::CouldNotCheck;
+    };
+    let Some(now) = now_secs() else {
+        return SelfUpdate::CouldNotCheck;
+    };
+
+    match latest_release_for_update(&cache_path, now, true, fetch_latest_release_tag) {
+        Some(latest) => offer_update_if_newer(&current, &latest),
+        None => {
+            eprintln!("{}", could_not_check_note());
+            SelfUpdate::CouldNotCheck
+        }
+    }
+}
+
+/// Hand this command over to the `tt` we just installed.
+///
+/// The registry is compiled into the binary, so the rest of this process would
+/// go on updating tools from the *old* list — and miss any tool the new
+/// version adds. That is exactly the confusing case: `tt update` installs a
+/// release that adds a tool, then reports every tool current.
+#[cfg(unix)]
+pub fn reexec_updated_binary() -> Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    let exe = env::current_exe().context("cannot find the tt that was just installed")?;
+    // `exec` replaces this process, so it only returns on failure.
+    let error = Command::new(exe)
+        .args(env::args_os().skip(1))
+        .env(SELF_UPDATED_ENV, "1")
+        .exec();
+
+    Err(anyhow::Error::new(error).context("failed to hand over to the updated tt"))
+}
+
+#[cfg(not(unix))]
+pub fn reexec_updated_binary() -> Result<()> {
+    eprintln!("{}", update_hint());
+    Ok(())
 }
 
 pub fn run() -> Result<()> {
@@ -131,43 +192,57 @@ fn write_cache(path: &Path, cache: &UpdateCache) -> Result<(), std::io::Error> {
 fn fetch_latest_release_tag() -> Option<String> {
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(2)))
+        // Do not follow it: the redirect *is* the answer, and the page it
+        // points at is a few hundred KB of HTML we would only throw away.
+        .max_redirects(0)
         .build();
     let agent = ureq::Agent::new_with_config(config);
 
-    let mut response = agent
+    let response = agent
         .get(UPDATE_URL)
-        .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "tt")
         .call()
         .ok()?;
-    let release: LatestRelease = response.body_mut().read_json().ok()?;
+    let location = response.headers().get("location")?.to_str().ok()?;
 
-    normalize_version(&release.tag_name)
+    tag_from_release_url(location)
+}
+
+/// Pull the version out of `…/releases/tag/v1.2.3`.
+fn tag_from_release_url(url: &str) -> Option<String> {
+    let tag = url.rsplit_once("/tag/")?.1.trim_end_matches('/');
+
+    normalize_version(tag)
         .and_then(|version| Version::parse(version).ok())
         .map(|version| version.to_string())
 }
 
-fn offer_update_if_newer(current: &Version, latest: &str) {
+fn offer_update_if_newer(current: &Version, latest: &str) -> SelfUpdate {
     let Some(latest) = newer_version(current, latest) else {
-        return;
+        return SelfUpdate::NothingToDo;
     };
 
     eprintln!("{}", update_headline(current, &latest));
 
     if !prompt_is_interactive() {
         eprintln!("{}", update_hint());
-        return;
+        return SelfUpdate::NothingToDo;
     }
 
     match confirm_update() {
-        Ok(true) => install_update_inline(&latest),
-        Ok(false) => eprintln!("{}", update_hint()),
+        Ok(true) if install_update_inline(&latest) => SelfUpdate::Installed,
+        Ok(true) => SelfUpdate::NothingToDo,
+        Ok(false) => {
+            eprintln!("{}", update_hint());
+            SelfUpdate::NothingToDo
+        }
         // Ctrl-C / closed terminal: stay out of the way.
-        Err(_) => {}
+        Err(_) => SelfUpdate::NothingToDo,
     }
 }
 
-fn install_update_inline(latest: &Version) {
+/// Returns whether a newer binary is now on disk.
+fn install_update_inline(latest: &Version) -> bool {
     let downloading = format!("  Downloading tt v{latest}…");
     eprintln!(
         "{}",
@@ -175,15 +250,18 @@ fn install_update_inline(latest: &Version) {
     );
 
     match run_embedded_installer_quietly(EMBEDDED_INSTALLER) {
-        Ok(()) => eprintln!(
-            "{} tt v{latest} installed — it takes effect on your next command.\n",
-            success_mark()
-        ),
-        Err(err) => eprintln!(
-            "{} update failed: {err:#}\n{}\n",
-            failure_mark(),
-            update_hint()
-        ),
+        Ok(()) => {
+            eprintln!("{} tt v{latest} installed\n", success_mark());
+            true
+        }
+        Err(err) => {
+            eprintln!(
+                "{} update failed: {err:#}\n{}\n",
+                failure_mark(),
+                update_hint()
+            );
+            false
+        }
     }
 }
 
@@ -213,6 +291,15 @@ fn update_headline(current: &Version, latest: &Version) -> String {
         current,
         latest.if_supports_color(Stream::Stderr, |text| text
             .style(Style::new().green().bold()))
+    )
+}
+
+/// Said out loud, because `tt update` was an explicit request to look.
+fn could_not_check_note() -> String {
+    let note = "  Could not reach GitHub, so tt's own version was not checked.";
+    format!(
+        "{}",
+        note.if_supports_color(Stream::Stderr, |text| text.dimmed())
     )
 }
 
@@ -484,6 +571,61 @@ mod tests {
         assert!(update_check_disabled(true, None));
         assert!(update_check_disabled(false, Some("1")));
         assert!(!update_check_disabled(false, Some("0")));
+    }
+
+    /// The release check reads a redirect rather than the GitHub API, because
+    /// the API's 60-per-hour unauthenticated limit is per IP and silently
+    /// turned "there is a new tt" into "you are up to date".
+    #[test]
+    fn the_tag_is_read_from_a_release_redirect() {
+        assert_eq!(
+            tag_from_release_url("https://github.com/herotomg/toms-tools/releases/tag/v0.1.24"),
+            Some("0.1.24".to_owned())
+        );
+        // Trailing slash, and a tag without the conventional `v`.
+        assert_eq!(
+            tag_from_release_url("https://github.com/o/r/releases/tag/1.2.3/"),
+            Some("1.2.3".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_redirect_that_names_no_tag_yields_nothing() {
+        for url in [
+            "https://github.com/herotomg/toms-tools/releases",
+            "https://github.com/o/r/releases/tag/not-a-version",
+            "https://github.com/o/r/releases/tag/",
+            "",
+        ] {
+            assert_eq!(tag_from_release_url(url), None, "{url} should not parse");
+        }
+    }
+
+    #[test]
+    fn nothing_to_do_when_the_release_is_not_newer() {
+        let current = Version::parse("1.0.0").unwrap();
+
+        assert_eq!(
+            offer_update_if_newer(&current, "1.0.0"),
+            SelfUpdate::NothingToDo
+        );
+        assert_eq!(
+            offer_update_if_newer(&current, "0.9.0"),
+            SelfUpdate::NothingToDo
+        );
+        assert_eq!(
+            offer_update_if_newer(&current, "not-a-version"),
+            SelfUpdate::NothingToDo
+        );
+    }
+
+    #[test]
+    fn update_url_is_not_the_rate_limited_api() {
+        assert!(
+            !UPDATE_URL.contains("api.github.com"),
+            "the API rate-limits unauthenticated callers per IP: {UPDATE_URL}"
+        );
+        assert!(UPDATE_URL.ends_with("/releases/latest"));
     }
 
     #[test]

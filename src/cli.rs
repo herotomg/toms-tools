@@ -158,8 +158,12 @@ fn update_command(registry: &Registry, args: UpdateArgs) -> Result<()> {
     }
 
     let targeted = args.all || !args.ids.is_empty();
-    if !targeted {
-        update::update_self_if_newer();
+    if !targeted && !update::self_update_already_handled() {
+        // A new tt may bundle tools this one has never heard of, so once the
+        // binary is replaced the rest of the work belongs to it, not us.
+        if update::update_self_if_newer() == update::SelfUpdate::Installed {
+            return update::reexec_updated_binary();
+        }
     }
 
     commands::tools_update::run(
