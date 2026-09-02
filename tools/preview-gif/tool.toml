@@ -1,0 +1,6 @@
+id = "preview-gif"
+name = "Preview GIF (Claude Code/Codex skill + screengif)"
+description = "Record polished preview GIFs of a UI with a visible cursor and clicks: the preview-gif skill plus the `screengif` recorder."
+version = "1"
+depends = []
+status_check = "test -x \"$HOME/.local/share/toms-tools/preview-gif/bin/screengif\" && test -d \"$HOME/.local/share/toms-tools/preview-gif/skills/preview-gif\""

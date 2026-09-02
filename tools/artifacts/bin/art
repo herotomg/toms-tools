@@ -1,0 +1,1213 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["markdown>=3.6", "pygments>=2.18"]
+# ///
+"""art - publish HTML/Markdown artifacts to your tailnet and get a shareable URL."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import unicodedata
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler
+from pathlib import Path
+from urllib.parse import quote
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_PORT = 8443
+FULL_DOC_RE = re.compile(r"<!doctype\s+html|<html[\s>]", re.I)
+MERMAID_CDN = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
+
+
+# ---------------------------------------------------------------- utilities
+
+def die(msg: str, code: int = 1) -> None:
+    print(f"art: {msg}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def info(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
+
+def art_home() -> Path:
+    p = Path(os.environ.get("ART_HOME", Path.home() / ".local/share/artifacts"))
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def art_port() -> int:
+    return int(os.environ.get("ART_PORT", DEFAULT_PORT))
+
+
+def tailscale() -> str:
+    for c in ("tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale",
+              "/Applications/Tailscale.app/Contents/MacOS/Tailscale"):
+        found = shutil.which(c) or (c if Path(c).exists() else None)
+        if found:
+            return found
+    die("tailscale CLI not found on PATH")
+
+
+def ts_json() -> dict:
+    try:
+        out = subprocess.run([tailscale(), "status", "--json"], capture_output=True,
+                             text=True, check=True).stdout
+        return json.loads(out)
+    except Exception as e:  # noqa: BLE001
+        die(f"could not talk to tailscaled ({e})")
+
+
+def node_dns() -> str:
+    if forced := os.environ.get("ART_HOST"):
+        return forced
+    return ts_json()["Self"]["DNSName"].rstrip(".")
+
+
+def base_url() -> str:
+    port = art_port()
+    suffix = "" if port == 443 else f":{port}"
+    return f"https://{node_dns()}{suffix}"
+
+
+def slugify(text: str) -> str:
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
+    return text[:60] or "artifact"
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def favicon_data_uri(emoji: str) -> str:
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        f'<text y=".9em" font-size="90">{emoji}</text></svg>'
+    )
+    return "data:image/svg+xml," + quote(svg, safe="")
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """Write via a temp file + rename, so a concurrent reader never sees a
+    half-written file (the server reads meta.json on every request)."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def write_json(path: Path, obj) -> None:
+    write_atomic(path, json.dumps(obj, indent=2, ensure_ascii=False))
+
+
+def read_template(name: str) -> str:
+    path = REPO_ROOT / "assets" / name
+    if not path.exists():
+        die(f"missing template {path}")
+    return path.read_text()
+
+
+def fill(template: str, **vals: str) -> str:
+    for k, v in vals.items():
+        template = template.replace("{{" + k + "}}", v)
+    return template
+
+
+def esc(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;")
+             .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+# ---------------------------------------------------------------- rendering
+
+def render_markdown(text: str) -> tuple[str, str | None]:
+    """Return (html_fragment, title_from_h1_or_None)."""
+    import markdown
+
+    title = None
+    m = re.search(r"^#\s+(.+)$", text, re.M)
+    if m:
+        title = m.group(1).strip()
+
+    md = markdown.Markdown(
+        extensions=["extra", "codehilite", "toc", "sane_lists", "admonition", "attr_list"],
+        extension_configs={"codehilite": {"css_class": "codehilite", "guess_lang": False}},
+    )
+    return md.convert(text), title
+
+
+def _extract_mermaid(text: str) -> tuple[str, list[str]]:
+    """Pull ```mermaid fences out of markdown before rendering."""
+    blocks: list[str] = []
+
+    def repl(mo: re.Match) -> str:
+        blocks.append(mo.group(1))
+        return f"\n\nMERMAIDPLACEHOLDER{len(blocks) - 1}\n\n"
+
+    text = re.sub(r"```mermaid\s*\n(.*?)```", repl, text, flags=re.S)
+    return text, blocks
+
+
+def _restore_mermaid(html: str, blocks: list[str]) -> str:
+    for i, b in enumerate(blocks):
+        html = html.replace(
+            f"<p>MERMAIDPLACEHOLDER{i}</p>",
+            f'<pre class="mermaid">{esc(b)}</pre>',
+        )
+    return html
+
+
+def mermaid_script(store: Path) -> str:
+    local = store / "_assets" / "mermaid.min.js"
+    src = "/_assets/mermaid.min.js" if local.exists() else MERMAID_CDN
+    return f"""<script src="{src}"></script>
+<script>
+  const _d = matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({{
+    startOnLoad: true,
+    theme: "base",
+    fontFamily: getComputedStyle(document.body).fontFamily,
+    themeVariables: _d ? {{
+      background: "#16151a", primaryColor: "#2a2018", primaryTextColor: "#e9e6e0",
+      primaryBorderColor: "#f0a35e", secondaryColor: "#24232a", tertiaryColor: "#1e1d23",
+      lineColor: "#9d978d", textColor: "#e9e6e0", mainBkg: "#1e1d23", nodeBorder: "#433f4a"
+    }} : {{
+      background: "#fbfaf8", primaryColor: "#fdf2e6", primaryTextColor: "#1c1b19",
+      primaryBorderColor: "#b4530a", secondaryColor: "#f4f1ec", tertiaryColor: "#ffffff",
+      lineColor: "#6b675f", textColor: "#1c1b19", mainBkg: "#ffffff", nodeBorder: "#cdc6b9"
+    }}
+  }});
+</script>"""
+
+
+def build_page(body: str, *, title: str, description: str, favicon: str,
+               updated: str, store: Path, extra_head: str = "",
+               wrap_class: str = "wrap", footer: bool = True) -> str:
+    has_mermaid = 'class="mermaid"' in body
+    footer_html = ""   # the injected header carries this now
+    return fill(
+        read_template("page.html"),
+        TITLE=esc(title),
+        DESCRIPTION=esc(description),
+        FAVICON=favicon_data_uri(favicon),
+        FAVICON_EMOJI=favicon,
+        UPDATED=updated,
+        UPDATED_HUMAN=updated[:10],
+        CONTENT=body,
+        EXTRA_HEAD=extra_head,
+        SCRIPTS=mermaid_script(store) if has_mermaid else "",
+        WRAP_CLASS=wrap_class,
+        FOOTER=footer_html,
+    )
+
+
+# ---------------------------------------------------------------- assets
+
+def sync_assets(store: Path) -> None:
+    dest = store / "_assets"
+    dest.mkdir(parents=True, exist_ok=True)
+    for pat in ("*.css", "*.js"):
+        for f in (REPO_ROOT / "assets").glob(pat):
+            shutil.copy2(f, dest / f.name)
+    _write_pygments_css(dest / "code.css")
+
+
+def _write_pygments_css(path: Path) -> None:
+    from pygments.formatters import HtmlFormatter
+
+    light = HtmlFormatter(style="friendly").get_style_defs(".codehilite")
+    dark = HtmlFormatter(style="github-dark").get_style_defs(".codehilite")
+    path.write_text(
+        f"{light}\n"
+        f"@media (prefers-color-scheme: dark) {{\n"
+        f":root:not([data-theme=\"light\"]) {{ color-scheme: dark; }}\n{dark}\n}}\n"
+        f":root[data-theme=\"dark\"] {{\n{dark}\n}}\n"
+    )
+
+
+# ---------------------------------------------------------------- store
+
+def meta_path(store: Path, slug: str) -> Path:
+    return store / slug / "meta.json"
+
+
+def load_all(store: Path) -> list[dict]:
+    items = []
+    for d in sorted(store.iterdir()):
+        if not d.is_dir() or d.name.startswith("_"):
+            continue
+        mp = d / "meta.json"
+        if mp.exists():
+            try:
+                items.append(json.loads(mp.read_text()))
+            except json.JSONDecodeError:
+                pass
+        else:
+            items.append({"slug": d.name, "title": d.name, "description": "",
+                          "favicon": "📄", "updated": now_iso(), "created": now_iso()})
+    items.sort(key=lambda m: m.get("updated", ""), reverse=True)
+    return items
+
+
+def write_gallery(store: Path) -> None:
+    items = load_all(store)
+    if items:
+        cards = "\n".join(
+            f'  <a class="card" href="/{esc(m["slug"])}/">\n'
+            f'    <span class="card-icon">{esc(m.get("favicon", "📄"))}</span>\n'
+            f'    <span class="card-body">\n'
+            f'      <span class="card-title">{esc(m.get("title", m["slug"]))}</span>\n'
+            f'      <span class="card-desc">{esc(m.get("description", ""))}</span>\n'
+            f'      <span class="card-meta">updated {esc(m.get("updated", "")[:10])}</span>\n'
+            f"    </span>\n  </a>"
+            for m in items
+        )
+        body = f'<div class="gallery">\n{cards}\n</div>'
+    else:
+        body = '<p class="muted">Nothing published yet. Run <code>art publish &lt;file&gt;</code>.</p>'
+
+    page = build_page(
+        f"<h1>Artifacts</h1>\n<p class=\"muted\">Published on {esc(node_dns())}</p>\n{body}",
+        title="Artifacts",
+        description="Artifacts published on this tailnet node",
+        favicon="🗂️",
+        updated=now_iso(),
+        store=store,
+        wrap_class="wrap wide",
+        footer=False,
+    )
+    write_atomic(store / "index.html", page)
+
+
+# ---------------------------------------------------------------- comments
+
+COMMENTS_DIR = "_comments"
+
+
+def comments_path(store: Path, slug: str) -> Path:
+    d = store / COMMENTS_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{slug}.json"
+
+
+def _lock_path(store: Path) -> Path:
+    return store / COMMENTS_DIR / ".lock"
+
+
+class _FileLock:
+    """Advisory lock so the CLI and the server never interleave writes."""
+
+    def __init__(self, store: Path):
+        self.path = _lock_path(store)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = None
+
+    def __enter__(self):
+        import fcntl
+        self.fh = open(self.path, "w")
+        fcntl.flock(self.fh, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        import fcntl
+        fcntl.flock(self.fh, fcntl.LOCK_UN)
+        self.fh.close()
+
+
+def load_comments(store: Path, slug: str) -> dict:
+    p = comments_path(store, slug)
+    if not p.exists():
+        return {"version": 1, "slug": slug, "threads": []}
+    try:
+        return json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return {"version": 1, "slug": slug, "threads": []}
+
+
+def save_comments(store: Path, slug: str, data: dict) -> None:
+    write_json(comments_path(store, slug), data)
+
+
+def comments_enabled(store: Path, slug: str) -> bool:
+    mp = meta_path(store, slug)
+    if not mp.exists():
+        return False
+    try:
+        return json.loads(mp.read_text()).get("comments", True) is not False
+    except json.JSONDecodeError:
+        return False
+
+
+def new_id(prefix: str) -> str:
+    import secrets
+    return f"{prefix}_{secrets.token_hex(4)}"
+
+
+def find_thread(data: dict, tid: str) -> dict | None:
+    return next((t for t in data["threads"] if t["id"] == tid), None)
+
+
+def open_count(data: dict) -> int:
+    return sum(1 for t in data["threads"] if not t.get("resolved"))
+
+
+def local_identity() -> dict:
+    """Identity for CLI-authored comments: the owner of this node."""
+    try:
+        st = ts_json()
+        uid = st["Self"]["UserID"]
+        u = (st.get("User") or {}).get(str(uid), {})
+        return {
+            "login": u.get("LoginName", "local"),
+            "name": u.get("DisplayName") or u.get("LoginName", "local"),
+            "pic": u.get("ProfilePicURL", ""),
+            "via": "cli",
+        }
+    except Exception:  # noqa: BLE001
+        return {"login": "local", "name": "local", "pic": "", "via": "cli"}
+
+
+def add_comment(store: Path, slug: str, author: dict, text: str,
+                thread_id: str | None = None, anchor: dict | None = None) -> dict:
+    """Create a thread or append a reply. Returns the touched thread."""
+    with _FileLock(store):
+        data = load_comments(store, slug)
+        comment = {
+            "id": new_id("c"),
+            "author": author,
+            "text": text,
+            "created": now_iso(),
+        }
+        if thread_id:
+            thread = find_thread(data, thread_id)
+            if thread is None:
+                raise KeyError(thread_id)
+            thread["comments"].append(comment)
+            thread["updated"] = comment["created"]
+        else:
+            thread = {
+                "id": new_id("t"),
+                "anchor": anchor,
+                "resolved": False,
+                "resolvedBy": None,
+                "resolvedAt": None,
+                "created": comment["created"],
+                "updated": comment["created"],
+                "comments": [comment],
+            }
+            data["threads"].append(thread)
+        save_comments(store, slug, data)
+        return thread
+
+
+def set_resolved(store: Path, slug: str, thread_id: str, resolved: bool,
+                 who: dict) -> dict:
+    with _FileLock(store):
+        data = load_comments(store, slug)
+        thread = find_thread(data, thread_id)
+        if thread is None:
+            raise KeyError(thread_id)
+        thread["resolved"] = resolved
+        thread["resolvedBy"] = who if resolved else None
+        thread["resolvedAt"] = now_iso() if resolved else None
+        thread["updated"] = now_iso()
+        save_comments(store, slug, data)
+        return thread
+
+
+def delete_comment(store: Path, slug: str, thread_id: str, comment_id: str,
+                   login: str) -> bool:
+    """Delete one's own comment. Removing the last one removes the thread."""
+    with _FileLock(store):
+        data = load_comments(store, slug)
+        thread = find_thread(data, thread_id)
+        if thread is None:
+            return False
+        target = next((c for c in thread["comments"] if c["id"] == comment_id), None)
+        if target is None or target["author"].get("login") != login:
+            return False
+        thread["comments"].remove(target)
+        if not thread["comments"]:
+            data["threads"].remove(thread)
+        else:
+            thread["updated"] = now_iso()
+        save_comments(store, slug, data)
+        return True
+
+
+# ---------------------------------------------------------------- commands
+
+def cmd_publish(args: argparse.Namespace) -> None:
+    src = Path(args.file).expanduser().resolve()
+    if not src.exists():
+        die(f"no such file: {src}")
+
+    store = art_home()
+    sync_assets(store)
+
+    raw = src.read_text()
+    title = args.title
+    favicon = args.favicon or "📄"
+    description = args.desc or ""
+
+    if src.suffix.lower() in (".md", ".markdown"):
+        stripped, mermaids = _extract_mermaid(raw)
+        body, h1 = render_markdown(stripped)
+        body = _restore_mermaid(body, mermaids)
+        title = title or h1 or src.stem.replace("-", " ").title()
+        page = None
+    elif src.suffix.lower() in (".html", ".htm"):
+        if FULL_DOC_RE.search(raw):
+            page = raw
+            if not title:
+                tm = re.search(r"<title>(.*?)</title>", raw, re.S | re.I)
+                title = tm.group(1).strip() if tm else src.stem.replace("-", " ").title()
+        else:
+            page = None
+            body = raw
+            title = title or src.stem.replace("-", " ").title()
+    else:
+        die(f"unsupported file type: {src.suffix} (want .md or .html)")
+
+    slug = args.slug or slugify(title)
+    dest = store / slug
+    existing = {}
+    if meta_path(store, slug).exists():
+        existing = json.loads(meta_path(store, slug).read_text())
+    dest.mkdir(parents=True, exist_ok=True)
+
+    favicon = args.favicon or existing.get("favicon") or favicon
+    description = args.desc or existing.get("description") or description
+
+    if page is None:
+        page = build_page(body, title=title, description=description, favicon=favicon,
+                          updated=now_iso(), store=store)
+    write_atomic(dest / "index.html", page)
+
+    for a in args.asset or []:
+        ap = Path(a).expanduser().resolve()
+        if not ap.exists():
+            die(f"no such asset: {ap}")
+        if ap.is_dir():
+            shutil.copytree(ap, dest / ap.name, dirs_exist_ok=True)
+        else:
+            shutil.copy2(ap, dest / ap.name)
+
+    meta = {
+        "slug": slug,
+        "title": title,
+        "description": description,
+        "favicon": favicon,
+        "source": str(src),
+        "created": existing.get("created", now_iso()),
+        "updated": now_iso(),
+        "public": existing.get("public", False),
+        "comments": False if args.no_comments else existing.get("comments", True),
+    }
+    write_json(meta_path(store, slug), meta)
+    write_gallery(store)
+
+    verb = "updated" if existing else "published"
+    info(f"{verb}: {title}")
+    print(f"{base_url()}/{slug}/")
+
+    if not _serve_configured():
+        info("\nwarning: tailscale is not serving the artifact store yet.")
+        info("         run `art serve` once to set it up.")
+
+
+def cmd_list(args: argparse.Namespace) -> None:
+    store = art_home()
+    items = load_all(store)
+    if not items:
+        info("nothing published yet")
+        return
+    if args.json:
+        print(json.dumps(items, indent=2, ensure_ascii=False))
+        return
+    base = base_url()
+    width = max(len(m["slug"]) for m in items)
+    for m in items:
+        print(f'{m.get("favicon","📄")} {m["slug"]:<{width}}  {m.get("updated","")[:10]}  '
+              f'{base}/{m["slug"]}/')
+
+
+def cmd_rm(args: argparse.Namespace) -> None:
+    store = art_home()
+    for slug in args.slug:
+        d = store / slug
+        if not d.is_dir():
+            info(f"no such artifact: {slug}")
+            continue
+        shutil.rmtree(d)
+        comments_path(store, slug).unlink(missing_ok=True)
+        info(f"removed {slug}")
+    write_gallery(store)
+
+
+def cmd_open(args: argparse.Namespace) -> None:
+    url = f"{base_url()}/{args.slug}/" if args.slug else base_url() + "/"
+    subprocess.run(["open", url] if sys.platform == "darwin" else ["xdg-open", url])
+    print(url)
+
+
+def cmd_url(args: argparse.Namespace) -> None:
+    print(f"{base_url()}/{args.slug}/" if args.slug else base_url() + "/")
+
+
+def _wrap(text: str, width: int, indent: str) -> str:
+    import textwrap
+    out = []
+    for para in text.splitlines():
+        out.extend(textwrap.wrap(para, width, initial_indent=indent,
+                                 subsequent_indent=indent) or [indent.rstrip()])
+    return "\n".join(out)
+
+
+COMMENT_VERBS = ("show", "reply", "resolve", "on", "off")
+
+
+def cmd_comments(args: argparse.Namespace) -> None:
+    store = art_home()
+
+    # The first positional is a verb, but `art comments <slug>` is the common
+    # case — so when it isn't a verb, treat it as a slug and shift everything.
+    if args.action and args.action not in COMMENT_VERBS:
+        args.action, args.slug, args.thread, args.text = (
+            "show", args.action, args.slug, args.thread)
+    args.action = args.action or "show"
+
+    if args.action in ("on", "off"):
+        if not args.slug:
+            die("which artifact? `art comments off <slug>`")
+        mp = meta_path(store, args.slug)
+        if not mp.exists():
+            die(f"no such artifact: {args.slug}")
+        meta = json.loads(mp.read_text())
+        meta["comments"] = args.action == "on"
+        write_json(mp, meta)
+        info(f"comments {args.action} for {args.slug}")
+        return
+
+    if args.action == "resolve":
+        if not (args.slug and args.thread):
+            die("usage: art comments resolve <slug> <thread-id>")
+        try:
+            set_resolved(store, args.slug, args.thread, not args.reopen, local_identity())
+        except KeyError:
+            die(f"no such thread: {args.thread}")
+        info(f"{'reopened' if args.reopen else 'resolved'} {args.thread}")
+        return
+
+    if args.action == "reply":
+        if not (args.slug and args.thread and args.text):
+            die('usage: art comments reply <slug> <thread-id> "your reply"')
+        try:
+            add_comment(store, args.slug, local_identity(), args.text,
+                        thread_id=args.thread)
+        except KeyError:
+            die(f"no such thread: {args.thread}")
+        info(f"replied to {args.thread}")
+        return
+
+    # default action: show
+    slugs = [args.slug] if args.slug else [m["slug"] for m in load_all(store)]
+    payload = {}
+    for slug in slugs:
+        data = load_comments(store, slug)
+        threads = data["threads"]
+        if not args.resolved:
+            threads = [t for t in threads if not t.get("resolved")]
+        if threads:
+            payload[slug] = threads
+
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+
+    if not payload:
+        info("no open comments" if not args.resolved else "no comments")
+        return
+
+    base = base_url()
+    for slug, threads in payload.items():
+        off = "" if comments_enabled(store, slug) else "  (commenting off)"
+        print(f"\n\033[1m{slug}\033[0m{off}")
+        for t in threads:
+            mark = "✓" if t.get("resolved") else "●"
+            print(f"\n  {mark} {t['id']}   {base}/{slug}/?comment={t['id']}")
+            anchor = t.get("anchor") or {}
+            if anchor.get("quote"):
+                quote = " ".join(anchor["quote"].split())
+                if len(quote) > 90:
+                    quote = quote[:87] + "…"
+                print(f"    \033[2m“{quote}”\033[0m")
+            else:
+                print("    \033[2m(on the page as a whole)\033[0m")
+            for c in t["comments"]:
+                when = c["created"][:16].replace("T", " ")
+                print(f"    \033[36m{c['author'].get('name', '?')}\033[0m  \033[2m{when}\033[0m")
+                print(_wrap(c["text"], 76, "      "))
+    print()
+
+
+# ---------------------------------------------------------------- serving
+
+def _serve_status_json() -> dict:
+    try:
+        out = subprocess.run([tailscale(), "serve", "status", "--json"],
+                             capture_output=True, text=True).stdout
+        return json.loads(out) if out.strip() else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _serve_configured() -> bool:
+    cfg = _serve_status_json()
+    key = f"{node_dns()}:{art_port()}"
+    return key in (cfg.get("Web") or {})
+
+
+def cmd_serve(args: argparse.Namespace) -> None:
+    store = art_home()
+    sync_assets(store)
+    write_gallery(store)
+    port = art_port()
+    ts = tailscale()
+
+    if args.off:
+        subprocess.run([ts, "serve", "--https", str(port), "off"], check=False)
+        info(f"stopped serving on :{port}")
+        return
+
+    mode = args.mode
+    if mode == "auto":
+        # tailscaled's static-path handler cannot read local files on macOS
+        # (the network extension is sandboxed; it answers 403). Use the
+        # local-server backend there and direct directory serving elsewhere.
+        mode = "proxy" if sys.platform == "darwin" else "dir"
+
+    if mode == "proxy":
+        _install_launch_agent(args.local_port)
+        target = f"http://127.0.0.1:{args.local_port}"
+    else:
+        target = str(store)
+
+    cmd = [ts, "serve", "--bg", "--https", str(port), target]
+    info("$ " + " ".join(cmd))
+    r = subprocess.run(cmd)
+    if r.returncode != 0:
+        if mode == "dir":
+            info("\ndirectory serving failed. The sandboxed macOS Tailscale app cannot always")
+            info("read your home directory. Retry with the local-server backend:")
+            info("    art serve --mode proxy")
+        raise SystemExit(r.returncode)
+    print(base_url() + "/")
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    store = art_home()
+    st = ts_json()
+    print(f"store        {store}")
+    print(f"node         {node_dns()}")
+    print(f"tailnet      {st.get('MagicDNSSuffix', '?')}")
+    print(f"backend      {st.get('BackendState', '?')}")
+    print(f"base url     {base_url()}/")
+    print(f"artifacts    {len(load_all(store))}")
+
+    cfg = _serve_status_json()
+    web = cfg.get("Web") or {}
+    print(f"serving      {'yes' if _serve_configured() else 'NO  (run `art serve`)'}")
+    for host, conf in web.items():
+        for path, h in (conf.get("Handlers") or {}).items():
+            tgt = h.get("Path") or h.get("Proxy") or h.get("Text", "")[:40]
+            print(f"  {host}{path} -> {tgt}")
+    funnel = [k for k, v in (cfg.get("AllowFunnel") or {}).items() if v]
+    if funnel:
+        print(f"\n!! FUNNEL (public internet) enabled on: {', '.join(funnel)}")
+
+
+def cmd_server(args: argparse.Namespace) -> None:
+    """Static server + comments API. Bound to localhost; tailscaled proxies to it."""
+    from http.server import ThreadingHTTPServer
+
+    store = art_home()
+    sync_assets(store)
+    Handler.store = store
+    httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    httpd.daemon_threads = True
+    info(f"serving {store} on http://127.0.0.1:{args.port}")
+    httpd.serve_forever()
+
+
+INJECT = (
+    '<link rel="stylesheet" href="/_assets/comments.css">\n'
+    '<script src="/_assets/comments.js" data-slug="{slug}" data-mode="{mode}" defer></script>\n'
+)
+
+HEAD_INJECT = '<link rel="stylesheet" href="/_assets/topbar.css">\n'
+ASSET_REF = re.compile(r"/_assets/([A-Za-z0-9._-]+)(?![?\w])")
+TOPBAR_JS = '<script src="/_assets/topbar.js" defer></script>\n'
+BODY_OPEN = re.compile(r"<body\b[^>]*>", re.I)
+
+
+def topbar_html(title: str, updated: str, home: bool) -> str:
+    back = "" if home else (
+        '<a class="ta-back" href="/">'
+        '<span aria-hidden="true">←</span><span class="ta-lbl">all artifacts</span></a>'
+    )
+    meta = f'<span class="ta-meta">updated {esc(updated)}</span>' if updated else ""
+    return (
+        '\n<header class="ta-bar">'
+        f'{back}'
+        f'<span class="ta-title">{esc(title)}</span>'
+        '<span class="ta-sp"></span>'
+        f'{meta}'
+        '<button class="ta-share" type="button">Share</button>'
+        "</header>\n"
+    )
+
+
+class Handler(BaseHTTPRequestHandler):
+    """Serves the artifact store and the comments API.
+
+    Identity comes from the Tailscale-User-* headers that `tailscale serve`
+    stamps on every proxied request. The socket is bound to 127.0.0.1, so only
+    tailscaled can reach it and those headers cannot be forged by a client.
+    """
+
+    store: Path = None  # set before serve_forever
+    protocol_version = "HTTP/1.1"
+    server_version = "tailartifacts"
+
+    # ---- identity
+
+    def identity(self) -> dict | None:
+        login = self.headers.get("Tailscale-User-Login")
+        if not login:
+            return None
+        return {
+            "login": login,
+            "name": self.headers.get("Tailscale-User-Name") or login,
+            "pic": self.headers.get("Tailscale-User-Profile-Pic") or "",
+        }
+
+    def require_identity(self) -> dict | None:
+        who = self.identity()
+        if who is None:
+            self.send_json({"error": "no tailscale identity on this request"}, 403)
+            return None
+        return who
+
+    # ---- plumbing
+
+    def log_message(self, fmt, *a):  # quieter than the default
+        pass
+
+    def send_json(self, obj, status: int = 200) -> None:
+        body = json.dumps(obj, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def read_json(self) -> dict:
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0 or n > 256 * 1024:
+            return {}
+        try:
+            return json.loads(self.rfile.read(n))
+        except json.JSONDecodeError:
+            return {}
+
+    def parsed(self):
+        from urllib.parse import urlparse, parse_qs, unquote
+        u = urlparse(self.path)
+        return unquote(u.path), {k: v[0] for k, v in parse_qs(u.query).items()}
+
+    # ---- routing
+
+    def do_GET(self) -> None:
+        path, q = self.parsed()
+        if path == "/api/me":
+            return self.send_json(self.identity() or {"login": None})
+        if path == "/api/comments":
+            return self.api_get_comments(q)
+        if path == "/api/counts":
+            return self.api_counts()
+        if path == "/api/stream":
+            return self.api_stream(q)
+        if path.startswith("/api/"):
+            return self.send_json({"error": "unknown endpoint"}, 404)
+        return self.serve_static(path)
+
+    def do_HEAD(self) -> None:
+        path, _ = self.parsed()
+        self.serve_static(path, head=True)
+
+    def do_POST(self) -> None:
+        path, q = self.parsed()
+        if path == "/api/comments":
+            return self.api_post_comment(q)
+        if path == "/api/resolve":
+            return self.api_resolve(q)
+        return self.send_json({"error": "unknown endpoint"}, 404)
+
+    def do_DELETE(self) -> None:
+        path, q = self.parsed()
+        if path == "/api/comments":
+            return self.api_delete(q)
+        return self.send_json({"error": "unknown endpoint"}, 404)
+
+    # ---- comments API
+
+    def _slug(self, q) -> str | None:
+        slug = (q.get("slug") or "").strip("/")
+        if not slug or "/" in slug or slug.startswith("_"):
+            self.send_json({"error": "bad slug"}, 400)
+            return None
+        if not meta_path(self.store, slug).exists():
+            self.send_json({"error": "no such artifact"}, 404)
+            return None
+        return slug
+
+    def api_get_comments(self, q) -> None:
+        slug = self._slug(q)
+        if slug is None:
+            return
+        data = load_comments(self.store, slug)
+        self.send_json({
+            "enabled": comments_enabled(self.store, slug),
+            "threads": data["threads"],
+            "me": self.identity(),
+        })
+
+    def api_counts(self) -> None:
+        out = {}
+        for m in load_all(self.store):
+            slug = m["slug"]
+            if not comments_enabled(self.store, slug):
+                continue
+            data = load_comments(self.store, slug)
+            out[slug] = {"open": open_count(data), "total": len(data["threads"])}
+        self.send_json(out)
+
+    def api_post_comment(self, q) -> None:
+        slug = self._slug(q)
+        if slug is None:
+            return
+        if not comments_enabled(self.store, slug):
+            return self.send_json({"error": "comments are off for this artifact"}, 403)
+        who = self.require_identity()
+        if who is None:
+            return
+        body = self.read_json()
+        text = (body.get("text") or "").strip()
+        if not text:
+            return self.send_json({"error": "empty comment"}, 400)
+        if len(text) > 10000:
+            return self.send_json({"error": "comment too long"}, 400)
+        try:
+            thread = add_comment(self.store, slug, who, text,
+                                 thread_id=body.get("thread"),
+                                 anchor=body.get("anchor"))
+        except KeyError:
+            return self.send_json({"error": "no such thread"}, 404)
+        self.send_json({"thread": thread})
+
+    def api_resolve(self, q) -> None:
+        slug = self._slug(q)
+        if slug is None:
+            return
+        who = self.require_identity()
+        if who is None:
+            return
+        body = self.read_json()
+        try:
+            thread = set_resolved(self.store, slug, q.get("thread", ""),
+                                  bool(body.get("resolved", True)), who)
+        except KeyError:
+            return self.send_json({"error": "no such thread"}, 404)
+        self.send_json({"thread": thread})
+
+    def api_delete(self, q) -> None:
+        slug = self._slug(q)
+        if slug is None:
+            return
+        who = self.require_identity()
+        if who is None:
+            return
+        ok = delete_comment(self.store, slug, q.get("thread", ""),
+                            q.get("comment", ""), who["login"])
+        if not ok:
+            return self.send_json({"error": "not found, or not yours to delete"}, 403)
+        self.send_json({"ok": True})
+
+    def api_stream(self, q) -> None:
+        """Server-sent events: ping the client whenever the thread file changes."""
+        import time
+        slug = self._slug(q)
+        if slug is None:
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        path = comments_path(self.store, slug)
+
+        def stamp() -> float:
+            return path.stat().st_mtime if path.exists() else 0.0
+
+        last, beat = stamp(), 0
+        try:
+            self.wfile.write(b"retry: 3000\n\n")
+            self.wfile.flush()
+            while True:
+                time.sleep(1)
+                cur = stamp()
+                if cur != last:
+                    last = cur
+                    self.wfile.write(b"event: changed\ndata: {}\n\n")
+                    self.wfile.flush()
+                beat += 1
+                if beat % 25 == 0:
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    # ---- static files
+
+    def serve_static(self, path: str, head: bool = False) -> None:
+        import mimetypes
+
+        rel = path.lstrip("/")
+        if rel.startswith(COMMENTS_DIR):
+            return self.send_error(404)
+
+        target = (self.store / rel).resolve()
+        try:
+            target.relative_to(self.store.resolve())
+        except ValueError:
+            return self.send_error(403)
+
+        if target.is_dir():
+            if not path.endswith("/"):
+                self.send_response(301)
+                self.send_header("Location", path + "/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            target = target / "index.html"
+        if not target.is_file():
+            return self.send_error(404)
+
+        is_html = target.suffix in (".html", ".htm")
+        if is_html:
+            body = self.inject(target, path).encode()
+        else:
+            body = target.read_bytes()
+
+        ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype.endswith("javascript"):
+            ctype += "; charset=utf-8"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache" if is_html else "max-age=300")
+        self.end_headers()
+        if not head:
+            self.wfile.write(body)
+
+    def inject(self, target: Path, path: str) -> str:
+        """Add the header and the comments bundle at serve time, so pages get
+        both whether they were generated or hand-authored."""
+        html = target.read_text()
+        segments = [seg for seg in path.split("/") if seg]
+        slug = segments[0] if segments else ""
+
+        title, updated = "Artifacts", ""
+        if slug:
+            try:
+                meta = json.loads(meta_path(self.store, slug).read_text())
+                title = meta.get("title", slug)
+                updated = (meta.get("updated") or "")[:10]
+            except (OSError, json.JSONDecodeError):
+                title = slug
+
+        tail = TOPBAR_JS
+        if not slug:
+            tail += INJECT.format(slug="", mode="gallery")
+        elif comments_enabled(self.store, slug):
+            tail += INJECT.format(slug=slug, mode="page")
+
+        html = html.replace("</head>", HEAD_INJECT + "</head>", 1)
+        bar = topbar_html(title, updated, home=not slug)
+        html, n = BODY_OPEN.subn(lambda m: m.group(0) + bar, html, count=1)
+        if not n:
+            html = bar + html
+        html = html.replace("</body>", tail + "</body>", 1)
+        return self.version_assets(html)
+
+    def version_assets(self, html: str) -> str:
+        """Stamp shared assets with their mtime. They are cached hard, so
+        without this an edit to base.css or comments.js reaches readers
+        whenever their cache happens to expire."""
+        def stamp(m):
+            f = self.store / "_assets" / m.group(1)
+            try:
+                return f"{m.group(0)}?v={int(f.stat().st_mtime)}"
+            except OSError:
+                return m.group(0)
+        return ASSET_REF.sub(stamp, html)
+
+
+LAUNCH_LABEL = "dev.tailartifacts.server"
+
+
+def _install_launch_agent(port: int) -> None:
+    if sys.platform != "darwin":
+        info("launch agent install is macOS-only; run `art server` yourself")
+        return
+    plist_dir = Path.home() / "Library/LaunchAgents"
+    plist_dir.mkdir(parents=True, exist_ok=True)
+    plist = plist_dir / f"{LAUNCH_LABEL}.plist"
+    uv = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
+    script = str(Path(__file__).resolve())
+    plist.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{LAUNCH_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{uv}</string><string>run</string><string>--quiet</string>
+    <string>--script</string><string>{script}</string>
+    <string>server</string><string>--port</string><string>{port}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>ART_HOME</key><string>{art_home()}</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/{LAUNCH_LABEL}.log</string>
+</dict>
+</plist>
+""")
+    import time
+    domain = f"gui/{os.getuid()}"
+    subprocess.run(["launchctl", "bootout", f"{domain}/{LAUNCH_LABEL}"],
+                   capture_output=True)
+    # bootout is asynchronous; bootstrapping before it lands fails silently.
+    for _ in range(30):
+        gone = subprocess.run(["launchctl", "print", f"{domain}/{LAUNCH_LABEL}"],
+                              capture_output=True).returncode != 0
+        if gone:
+            break
+        time.sleep(0.1)
+    r = subprocess.run(["launchctl", "bootstrap", domain, str(plist)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        die(f"could not load the launch agent: {r.stderr.strip() or r.returncode}")
+    info(f"launch agent installed: {plist}")
+
+
+def cmd_vendor(args: argparse.Namespace) -> None:
+    """Download mermaid locally so artifacts render without internet."""
+    import urllib.request
+
+    dest = art_home() / "_assets"
+    dest.mkdir(parents=True, exist_ok=True)
+    out = dest / "mermaid.min.js"
+    info(f"downloading {MERMAID_CDN}")
+    urllib.request.urlretrieve(MERMAID_CDN, out)
+    info(f"wrote {out} ({out.stat().st_size // 1024} KB)")
+
+
+def cmd_public(args: argparse.Namespace) -> None:
+    die("funnel (public internet) exposure is intentionally not automated; "
+        "run `tailscale funnel` yourself if you really mean it")
+
+
+# ---------------------------------------------------------------- cli
+
+def main() -> None:
+    p = argparse.ArgumentParser(prog="art", description=__doc__)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    pub = sub.add_parser("publish", help="publish a .md or .html file")
+    pub.add_argument("file")
+    pub.add_argument("--title", "-t")
+    pub.add_argument("--slug", "-s", help="stable URL segment (default: from title)")
+    pub.add_argument("--desc", "-d", default="", help="one-line description")
+    pub.add_argument("--favicon", "-f", help="emoji shown in tab and gallery")
+    pub.add_argument("--asset", "-a", action="append", help="extra file/dir to copy alongside")
+    pub.add_argument("--no-comments", action="store_true",
+                     help="publish without the commenting sidebar")
+    pub.set_defaults(func=cmd_publish)
+
+    ls = sub.add_parser("list", help="list published artifacts")
+    ls.add_argument("--json", action="store_true")
+    ls.set_defaults(func=cmd_list)
+
+    rm = sub.add_parser("rm", help="delete artifacts")
+    rm.add_argument("slug", nargs="+")
+    rm.set_defaults(func=cmd_rm)
+
+    op = sub.add_parser("open", help="open an artifact in the browser")
+    op.add_argument("slug", nargs="?")
+    op.set_defaults(func=cmd_open)
+
+    ur = sub.add_parser("url", help="print an artifact URL")
+    ur.add_argument("slug", nargs="?")
+    ur.set_defaults(func=cmd_url)
+
+    sv = sub.add_parser("serve", help="configure tailscale to serve the store")
+    sv.add_argument("--mode", choices=["auto", "dir", "proxy"], default="auto",
+                    help="auto: proxy on macOS, dir elsewhere")
+    sv.add_argument("--local-port", type=int, default=8788)
+    sv.add_argument("--off", action="store_true")
+    sv.set_defaults(func=cmd_serve)
+
+    st = sub.add_parser("status", help="show store, node and serve state")
+    st.set_defaults(func=cmd_status)
+
+    se = sub.add_parser("server", help="run the local static server (proxy mode)")
+    se.add_argument("--port", type=int, default=8788)
+    se.set_defaults(func=cmd_server)
+
+    cm = sub.add_parser("comments", help="read, reply to, resolve or disable comments")
+    cm.add_argument("action", nargs="?", default="show",
+                    metavar="show|reply|resolve|on|off",
+                    help="omit to show; a slug here also means show")
+    cm.add_argument("slug", nargs="?")
+    cm.add_argument("thread", nargs="?")
+    cm.add_argument("text", nargs="?")
+    cm.add_argument("--resolved", action="store_true", help="include resolved threads")
+    cm.add_argument("--reopen", action="store_true", help="with resolve: reopen instead")
+    cm.add_argument("--json", action="store_true")
+    cm.set_defaults(func=cmd_comments)
+
+    vd = sub.add_parser("vendor", help="download mermaid into the shared asset dir")
+    vd.set_defaults(func=cmd_vendor)
+
+    pb = sub.add_parser("public", help="(refused) expose to the public internet")
+    pb.set_defaults(func=cmd_public)
+
+    args = p.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

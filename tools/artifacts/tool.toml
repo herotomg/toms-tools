@@ -1,0 +1,6 @@
+id = "artifacts"
+name = "Artifacts (art CLI + Claude Code/Codex skills)"
+description = "Publish Markdown/HTML to your tailnet as a commentable page: the `art` CLI plus the artifact-design and publish-artifact skills."
+version = "1"
+depends = []
+status_check = "test -x \"$HOME/.local/share/toms-tools/artifacts/bin/art\" && test -d \"$HOME/.local/share/toms-tools/artifacts/skills/artifact-design\" && test -d \"$HOME/.local/share/toms-tools/artifacts/skills/publish-artifact\""

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- TITLE: a short, distinctive noun phrase (2-4 words). A name, not a summary.
+     It is what the browser tab and the gallery card show. -->
+<title>Q3 Threat Model</title>
+<meta name="description" content="One sentence saying what this page is.">
+
+<!-- Favicon: swap the emoji. Keep it stable across republishes of the same slug. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+
+<!-- Shared design system. Gives you the full token set, typography, tables,
+     callouts, .kpi, .panel, .card-grid, print styles, and light/dark.
+     Do NOT restate what it already provides. -->
+<link rel="stylesheet" href="/_assets/base.css">
+<link rel="stylesheet" href="/_assets/code.css">
+
+<style>
+  /* Page-specific CSS only. Build on the tokens — never hardcode a hex value
+     that has a token, or the page breaks in one of the two themes.
+     Available: --bg --surface --fg --muted --border --border-str --accent
+                --accent-bg --ok --ok-bg --warn --warn-bg --danger --danger-bg
+                --code-bg --radius --measure --font --mono */
+</style>
+</head>
+
+<body>
+<!-- .wrap = reading measure (~68ch). Add .wide for dashboards and wide tables. -->
+<main class="wrap">
+
+  <h1>Q3 Threat Model</h1>
+  <p class="lede">The one-sentence version, for someone who will not read the rest.</p>
+
+  <h2>Section</h2>
+  <p>Body copy. Prose is the default; reach for a component only when the
+     content is genuinely tabular, numeric, or a warning.</p>
+
+  <!-- Numbers that deserve to be scanned rather than read -->
+  <div class="kpi">
+    <div><span class="n">14</span><span class="l">findings</span></div>
+    <div><span class="n">3</span><span class="l">critical</span></div>
+    <div><span class="n">92%</span><span class="l">coverage</span></div>
+  </div>
+
+  <!-- Callout variants: .note .ok .warn .danger -->
+  <div class="callout warn">
+    <p class="admonition-title">Assumption</p>
+    <p>Say the thing that would change the conclusion if it were wrong.</p>
+  </div>
+
+  <!-- Tables scroll inside themselves; the page body never scrolls sideways. -->
+  <table>
+    <thead><tr><th>Risk</th><th>Likelihood</th><th>Owner</th></tr></thead>
+    <tbody>
+      <tr><td>Token replay</td><td>Medium</td><td>Platform</td></tr>
+    </tbody>
+  </table>
+
+  <!-- Mermaid renders natively; uncomment the script at the bottom to enable. -->
+  <!--
+  <pre class="mermaid">
+  flowchart LR
+    A[Client] -->|mTLS| B(Gateway)
+    B --> C{Authz}
+  </pre>
+  -->
+
+  <!-- No footer needed: the server injects a sticky header with the back
+       link, the title, the updated date, and a Share button. -->
+</main>
+
+<!-- Only include if the page actually has a .mermaid block.
+<script src="/_assets/mermaid.min.js"></script>
+<script>
+  const _d = matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({{
+    startOnLoad: true,
+    theme: "base",
+    fontFamily: getComputedStyle(document.body).fontFamily,
+    themeVariables: _d ? {{
+      background: "#16151a", primaryColor: "#2a2018", primaryTextColor: "#e9e6e0",
+      primaryBorderColor: "#f0a35e", secondaryColor: "#24232a", tertiaryColor: "#1e1d23",
+      lineColor: "#9d978d", textColor: "#e9e6e0", mainBkg: "#1e1d23", nodeBorder: "#433f4a"
+    }} : {{
+      background: "#fbfaf8", primaryColor: "#fdf2e6", primaryTextColor: "#1c1b19",
+      primaryBorderColor: "#b4530a", secondaryColor: "#f4f1ec", tertiaryColor: "#ffffff",
+      lineColor: "#6b675f", textColor: "#1c1b19", mainBkg: "#ffffff", nodeBorder: "#cdc6b9"
+    }}
+  }});
+</script>
+-->
+</body>
+</html>

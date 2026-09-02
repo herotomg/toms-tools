@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# screengif - record a Mac screen target and turn it into a README-ready GIF.
+# Designed to be driven unattended by an agent: every mode is non-interactive
+# and time-bounded, so it can never sit waiting for a human.
+# Pipeline: screencapture -> gifski -> gifsicle
+set -euo pipefail
+export PATH="/opt/homebrew/bin:$PATH"
+
+FPS=15; WIDTH=800; QUALITY=90; LOSSY=65; DUR=10
+REGION=""; SRC=""; APP=""; WINID=""; DISP=""; OUT=""
+INTERACTIVE=0; CLICKS=1; KEEP=0; SHADOW=0; DO_LIST=0
+
+die() { echo "screengif: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null || die "$1 not found - $2"; }
+
+usage() {
+  cat <<'HELPEOF'
+screengif - record a screen target -> optimized GIF for GitHub
+
+USAGE
+  screengif [target] [options] [output.gif]
+
+TARGETS (all unattended; pick one)
+  --app NAME            Record NAME's frontmost window. Resolved to a window id
+                        via peekaboo, so the window is captured cleanly even if
+                        it's partly covered. This is the usual choice.
+  --window-id N         Record a specific window id (see --list).
+  --display N           Record display N (1 = primary). See --list for bounds.
+  -R x,y,w,h            Record a fixed rectangle, in points, global coordinates.
+  -f, --from FILE       Skip recording; just convert an existing .mov/.mp4.
+
+  --list                Print available displays and app windows, then exit.
+                        Use this to discover what to point --app/--window-id at.
+
+RECORDING
+  -d, --duration SEC    How long to record (default 10). Always bounded.
+  --no-clicks           Don't highlight mouse clicks (shown by default).
+  --shadow              Keep the window's drop shadow (window modes only).
+  --keep                Keep the intermediate .mov next to the GIF.
+  -i, --interactive     HUMAN ONLY: drag a region and click Record, stop from
+                        the menu bar. Blocks until a person acts - never use
+                        this from an agent or a script.
+
+ENCODING
+  --fps N               Frames per second (default 15).
+  -w, --width PX        Max width (default 800 - GitHub's README column).
+  -q, --quality 1-100   gifski quality (default 90).
+  --lossy N             gifsicle lossy level, 0 disables (default 65).
+
+EXAMPLES
+  screengif --list
+  screengif --app Ghostty -d 8 demo.gif
+  screengif --app "Google Chrome" -d 15 --fps 20 demo.gif
+  screengif --display 1 -d 10 fullscreen.gif
+  screengif -f ~/Desktop/recording.mov demo.gif
+HELPEOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --app) APP="${2:-}"; shift 2 ;;
+    --window-id) WINID="${2:-}"; shift 2 ;;
+    --display) DISP="${2:-}"; shift 2 ;;
+    -R) REGION="${2:-}"; shift 2 ;;
+    -f|--from) SRC="${2:-}"; shift 2 ;;
+    --list) DO_LIST=1; shift ;;
+    -d|--duration) DUR="${2:-}"; shift 2 ;;
+    --no-clicks) CLICKS=0; shift ;;
+    --shadow) SHADOW=1; shift ;;
+    --keep) KEEP=1; shift ;;
+    -i|--interactive) INTERACTIVE=1; shift ;;
+    --fps) FPS="${2:-}"; shift 2 ;;
+    -w|--width) WIDTH="${2:-}"; shift 2 ;;
+    -q|--quality) QUALITY="${2:-}"; shift 2 ;;
+    --lossy) LOSSY="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) die "unknown option $1 (try --help)" ;;
+    *) OUT="$1"; shift ;;
+  esac
+done
+
+# --- discovery -------------------------------------------------------------
+if [ "$DO_LIST" = 1 ]; then
+  need peekaboo "brew install steipete/tap/peekaboo"
+  echo "DISPLAYS  (--display N)"
+  peekaboo screen list --json-output 2>/dev/null \
+    | jq -r '.data.screens[] | "  \(.index+1)  \(.name)  \(.bounds.width)x\(.bounds.height) at \(.bounds.x),\(.bounds.y)  scale \(.scaleFactor)\(if .isPrimary then "  [primary]" else "" end)"'
+  echo
+  echo "WINDOWS  (--app NAME  /  --window-id N)"
+  for a in $(peekaboo app list --json-output 2>/dev/null | jq -r '.data.apps[] | select(.is_hidden | not) | .name | @base64'); do
+    name=$(echo "$a" | base64 -d)
+    peekaboo window list --app "$name" --json-output 2>/dev/null \
+      | jq -r --arg app "$name" '.data.windows[]?
+          | select(.is_on_screen and (.window_title // "") != "")
+          | "  \($app)  id=\(.window_id)  \(.bounds.width)x\(.bounds.height) at \(.bounds.x),\(.bounds.y)  \(.window_title[0:60])"'
+  done
+  exit 0
+fi
+
+need gifski "brew install gifski"
+need gifsicle "brew install gifsicle"
+
+OUT="${OUT:-screengif-$(date +%Y%m%d-%H%M%S).gif}"
+case "$OUT" in *.gif) ;; *) OUT="$OUT.gif" ;; esac
+[ "$(dirname "$OUT")" = "." ] || mkdir -p "$(dirname "$OUT")"
+
+# --- resolve the target ----------------------------------------------------
+if [ -n "$SRC" ]; then
+  [ -f "$SRC" ] || die "no such file: $SRC"
+  MOV="$SRC"
+else
+  n=0
+  for v in "$APP" "$WINID" "$DISP" "$REGION"; do [ -n "$v" ] && n=$((n+1)); done
+  [ "$INTERACTIVE" = 1 ] && n=$((n+1))
+  [ "$n" -le 1 ] || die "pick one target only (--app / --window-id / --display / -R / -i)"
+  [ "$n" -eq 1 ] || die "no target given. Run 'screengif --list' to see displays and windows, then use --app NAME (try --help)"
+
+  if [ -n "$APP" ]; then
+    need peekaboo "brew install steipete/tap/peekaboo"
+    WINID=$(peekaboo window list --app "$APP" --json-output 2>/dev/null \
+      | jq -r '[.data.windows[]? | select(.is_on_screen and (.window_title // "") != "")]
+               | (map(select(.is_frontmost)) + .) | .[0].window_id // empty' || true)
+    [ -n "$WINID" ] || die "no on-screen window found for app '$APP'. Run 'screengif --list' to see what's available."
+  fi
+
+  if [ "$KEEP" = 1 ]; then MOV="${OUT%.gif}.mov"; else
+    TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD"' EXIT
+    MOV="$TMPD/rec.mov"
+  fi
+
+  args=(-v -x)
+  [ "$CLICKS" = 1 ] && args+=(-k)
+
+  if [ "$INTERACTIVE" = 1 ]; then
+    args+=(-J video)
+    echo "screengif: drag a region, then click Record. Stop from the menu bar." >&2
+  else
+    args+=(-V "$DUR")   # bounded: an agent can never hang on this
+    if   [ -n "$WINID" ];  then args+=(-l "$WINID"); [ "$SHADOW" = 1 ] || args+=(-o)
+    elif [ -n "$DISP" ];   then args+=(-D "$DISP")
+    else                        args+=(-R "$REGION")
+    fi
+    echo "screengif: recording ${DUR}s..." >&2
+  fi
+
+  screencapture "${args[@]}" "$MOV" \
+    || die "screencapture failed. If this wasn't a cancel, grant Screen Recording: System Settings > Privacy & Security > Screen Recording -> enable your terminal, then restart it."
+  [ -s "$MOV" ] || die "recording produced no data (cancelled, or the target vanished mid-record)"
+fi
+
+# --- encode ----------------------------------------------------------------
+# gifski's internal ffmpeg decoder emits harmless colorspace/swscaler warnings on
+# every screencapture-sourced file. Hold stderr and only surface it on failure,
+# so a real error is still visible but routine runs stay quiet.
+gq=(); [ -t 1 ] || gq=(-q)
+ERRLOG="$(mktemp)"
+if ! gifski "${gq[@]}" --fps "$FPS" --width "$WIDTH" --quality "$QUALITY" -o "$OUT" "$MOV" 2>"$ERRLOG"; then
+  cat "$ERRLOG" >&2; rm -f "$ERRLOG"; die "gifski failed to encode $MOV"
+fi
+rm -f "$ERRLOG"
+
+# gifsicle's lossy pass usually shrinks things, but on noisy or gradient-heavy
+# frames it can grow the file. Only keep the result if it actually won.
+if [ "${LOSSY:-0}" != "0" ]; then
+  before=$(stat -f%z "$OUT")
+  if gifsicle -O3 --lossy="$LOSSY" "$OUT" -o "$OUT.tmp" 2>/dev/null; then
+    after=$(stat -f%z "$OUT.tmp")
+    if [ "$after" -lt "$before" ]; then mv "$OUT.tmp" "$OUT"; else rm -f "$OUT.tmp"; fi
+  else
+    rm -f "$OUT.tmp"
+  fi
+fi
+
+SIZE=$(du -h "$OUT" | cut -f1 | tr -d ' ')
+DIMS=$(gifsicle --info "$OUT" 2>/dev/null | sed -n 's/.*logical screen \([0-9x]*\).*/\1/p')
+echo "$OUT  ($SIZE${DIMS:+, $DIMS}, ${FPS}fps)"
+[ "$KEEP" = 1 ] && [ -z "$SRC" ] && echo "$MOV  (kept)"
+exit 0

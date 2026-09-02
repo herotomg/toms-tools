@@ -39,6 +39,8 @@ there (just press Enter). Set `TT_NO_UPDATE_CHECK=1` to turn the check off.
 | `gtms-alias` | Install a zsh `gtms` alias for `gt modify && gt submit --stack`. |
 | `pr-fixer` | Install the pr-fixer Claude Code agent and `/fix-pr` slash command. |
 | `agent-matrix` | Install the general-purpose Claude Code subagent as 15 model x effort variants (sonnet/opus/fable x low/medium/high/xhigh/max). |
+| `artifacts` | Publish Markdown/HTML to your tailnet as a commentable page: the `art` CLI plus the artifact-design and publish-artifact skills. |
+| `preview-gif` | Record preview GIFs of a UI with a visible cursor and clicks: the preview-gif skill plus the `screengif` recorder. |
 
 Install a single tool by id:
 

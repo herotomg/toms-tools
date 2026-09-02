@@ -1,0 +1,55 @@
+/* tailartifacts — the persistent header. Injected at serve time, so every
+   artifact gets it whether it was generated or hand-authored. */
+
+html { scroll-padding-top: 3.6rem; }
+
+.ta-bar {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: .75rem;
+  padding: .5rem max(1rem, env(safe-area-inset-left)) .5rem 1rem;
+  font: 500 .82rem/1.4 var(--font, system-ui, sans-serif);
+  color: var(--muted, #6b675f);
+  background: color-mix(in srgb, var(--bg, #fbfaf8) 94%, transparent);
+  border-bottom: 1px solid var(--border, #e3ded5);
+  backdrop-filter: saturate(1.4) blur(10px);
+  -webkit-backdrop-filter: saturate(1.4) blur(10px);
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .ta-bar { background: var(--bg, #fbfaf8); }
+}
+
+.ta-bar a { color: inherit; text-decoration: none; }
+.ta-back {
+  display: inline-flex; align-items: center; gap: .35em;
+  padding: .15rem .4rem; margin-left: -.4rem; border-radius: 6px;
+  white-space: nowrap;
+}
+.ta-back:hover { background: var(--code-bg, #f4f1ec); color: var(--fg, #1c1b19); }
+
+.ta-title {
+  font-weight: 620; color: var(--fg, #1c1b19);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;
+}
+.ta-sp { flex: 1 1 auto; min-width: .5rem; }
+.ta-meta { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.ta-share {
+  font: inherit; font-weight: 620;
+  color: var(--fg, #1c1b19);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e3ded5); border-radius: 6px;
+  padding: .2rem .6rem; cursor: pointer; white-space: nowrap;
+}
+.ta-share:hover { border-color: var(--border-str, #cdc6b9); }
+.ta-share.ta-done { color: var(--ok, #2f6f4e); border-color: currentColor; }
+
+/* The bar replaces the top of the page's own padding. */
+.ta-bar + .wrap, .ta-bar + main.wrap { padding-top: 2.5rem; }
+
+@media (max-width: 720px) {
+  .ta-back .ta-lbl { display: none; }
+  .ta-meta { display: none; }
+}
+
+@media print { .ta-bar { display: none; } }

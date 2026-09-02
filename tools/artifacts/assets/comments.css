@@ -1,0 +1,169 @@
+/* tailartifacts — commenting UI. Injected at serve time; no page opts in. */
+
+#ac-root, #ac-root * { box-sizing: border-box; }
+#ac-root {
+  --ac-w: 300px;
+  font: 14px/1.5 var(--font, system-ui, sans-serif);
+}
+
+/* ---- anchored highlights in the document ---- */
+mark.ac-hl {
+  background: color-mix(in srgb, var(--warn, #9a6b00) 22%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: .05em 0;
+  cursor: pointer;
+  transition: background .12s;
+}
+mark.ac-hl:hover { background: color-mix(in srgb, var(--warn, #9a6b00) 34%, transparent); }
+mark.ac-hl.ac-on {
+  background: color-mix(in srgb, var(--accent, #b4530a) 42%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #b4530a) 42%, transparent);
+}
+
+/* ---- the gutter rail ---- */
+#ac-rail {
+  position: absolute; top: 0; right: 16px; width: var(--ac-w);
+  z-index: 40;
+}
+#ac-root.ac-drawer #ac-rail {
+  position: fixed; top: 2.6rem; right: 0; bottom: 0; width: min(340px, 92vw);
+  background: var(--bg, #fff);
+  border-left: 1px solid var(--border, #ddd);
+  overflow-y: auto; padding: 1rem .9rem 4rem;
+  transform: translateX(101%);
+  transition: transform .18s ease;
+  box-shadow: -12px 0 32px rgba(0,0,0,.10);
+}
+#ac-root.ac-drawer.ac-open #ac-rail { transform: none; }
+#ac-root.ac-hidden #ac-rail { display: none; }
+
+.ac-head {
+  display: flex; align-items: center; gap: .5rem;
+  font-size: .78rem; color: var(--muted, #777);
+  text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
+  padding: .3rem .1rem .5rem;
+}
+#ac-root:not(.ac-drawer) .ac-head { position: sticky; top: 3.4rem; }
+.ac-head .ac-sp { flex: 1; }
+.ac-btn {
+  font: inherit; font-size: .78rem; font-weight: 600;
+  border: 1px solid var(--border, #ddd); background: var(--surface, #fff);
+  color: var(--fg, #111); border-radius: 6px; padding: .2rem .5rem; cursor: pointer;
+  line-height: 1.6; white-space: nowrap;
+}
+.ac-btn:hover { border-color: var(--border-str, #bbb); }
+/* The primary action is a solid neutral, not the accent: white on --accent is
+   only ~4.7:1 in light and about 1.9:1 in dark, where the accent is a pale
+   orange. This keeps the accent for marking content and stays readable in both
+   themes. */
+.ac-btn.ac-primary {
+  background: var(--fg, #1c1b19);
+  border-color: var(--fg, #1c1b19);
+  color: var(--bg, #fbfaf8);
+}
+.ac-btn.ac-primary:hover { opacity: .88; }
+.ac-btn.ac-primary:disabled { opacity: .45; cursor: default; }
+.ac-btn.ac-ghost { border-color: transparent; background: none; color: var(--muted, #777); }
+
+/* ---- cards ---- */
+.ac-cards { position: relative; }
+#ac-root:not(.ac-drawer) .ac-card { position: absolute; left: 0; width: 100%; }
+#ac-root.ac-drawer .ac-card { margin-bottom: .6rem; }
+
+.ac-card {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 10px;
+  padding: .7rem .8rem;
+  transition: top .18s ease, border-color .12s, box-shadow .12s;
+  cursor: pointer;
+}
+.ac-card:hover { border-color: var(--border-str, #bbb); }
+.ac-card.ac-on {
+  border-color: var(--accent, #b4530a);
+  box-shadow: 0 4px 16px rgba(0,0,0,.09);
+  cursor: default;
+}
+.ac-card.ac-resolved { opacity: .6; }
+
+.ac-quote {
+  font-size: .78rem; color: var(--muted, #777);
+  border-left: 2px solid var(--warn, #9a6b00);
+  padding-left: .5rem; margin-bottom: .5rem;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ac-quote.ac-orphan { border-left-color: var(--danger, #a32f2f); }
+.ac-label {
+  font-size: .68rem; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted, #777); font-weight: 650; margin-bottom: .35rem;
+}
+
+.ac-msg { display: flex; gap: .5rem; margin-bottom: .55rem; }
+.ac-msg:last-of-type { margin-bottom: 0; }
+.ac-av {
+  width: 22px; height: 22px; border-radius: 50%; flex: none; margin-top: .1rem;
+  object-fit: cover; background: var(--code-bg, #eee);
+  display: grid; place-items: center; font-size: .65rem; font-weight: 700;
+  color: var(--muted, #777); overflow: hidden;
+}
+.ac-msg-body { min-width: 0; flex: 1; }
+.ac-who { font-size: .8rem; font-weight: 620; }
+.ac-when { font-size: .7rem; color: var(--muted, #777); font-weight: 400; margin-left: .35rem; }
+.ac-text { font-size: .85rem; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: .1rem; }
+.ac-del {
+  float: right; border: 0; background: none; cursor: pointer; padding: 0 .1rem;
+  color: var(--muted, #777); font-size: .85rem; opacity: 0; line-height: 1;
+}
+.ac-msg:hover .ac-del { opacity: .7; }
+.ac-del:hover { opacity: 1; color: var(--danger, #a32f2f); }
+
+.ac-more { font-size: .75rem; color: var(--muted, #777); margin: -.2rem 0 .5rem; }
+
+textarea.ac-input {
+  width: 100%; font: inherit; font-size: .85rem; resize: vertical; min-height: 3.6em;
+  border: 1px solid var(--border, #ddd); border-radius: 7px;
+  padding: .45rem .55rem; margin-top: .5rem;
+  background: var(--bg, #fff); color: var(--fg, #111);
+}
+textarea.ac-input:focus { outline: 2px solid color-mix(in srgb, var(--accent,#b4530a) 45%, transparent); outline-offset: -1px; }
+.ac-actions { display: flex; gap: .4rem; align-items: center; margin-top: .45rem; }
+.ac-actions .ac-sp { flex: 1; }
+.ac-hint { font-size: .68rem; color: var(--muted, #777); }
+
+/* ---- floating bits ---- */
+#ac-sel {
+  position: absolute; z-index: 60; display: none;
+  background: var(--fg, #111); color: var(--bg, #fff);
+  border: 0; border-radius: 7px; padding: .3rem .6rem;
+  font: inherit; font-size: .78rem; font-weight: 600; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,.22);
+}
+#ac-sel.ac-show { display: block; }
+
+#ac-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 60;
+  border: 1px solid var(--border, #ddd); background: var(--surface, #fff); color: var(--fg, #111);
+  border-radius: 100px; padding: .5rem .8rem; cursor: pointer;
+  font: inherit; font-size: .82rem; font-weight: 620;
+  box-shadow: 0 4px 16px rgba(0,0,0,.14);
+  display: none;
+}
+#ac-root.ac-drawer #ac-fab { display: block; }
+#ac-fab .ac-n {
+  display: inline-block; min-width: 1.4em; margin-left: .4em; padding: 0 .35em;
+  background: var(--accent-bg, #fdf2e6); color: var(--accent, #b4530a);
+  border: 1px solid currentColor; border-radius: 100px;
+  font-size: .72rem; text-align: center;
+}
+
+/* ---- gallery badges ---- */
+.ac-badge {
+  display: inline-flex; align-items: center; gap: .2em;
+  font-size: .72rem; font-weight: 640; color: var(--muted, #777);
+  border: 1px solid var(--border, #ddd); border-radius: 100px;
+  padding: 0 .45em; margin-left: .4em; vertical-align: middle;
+}
+.ac-badge.ac-has { color: var(--accent, #b4530a); border-color: currentColor; }
+
+@media print { #ac-root { display: none; } mark.ac-hl { background: none; } }
