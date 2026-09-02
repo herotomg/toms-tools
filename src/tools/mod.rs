@@ -290,6 +290,26 @@ mod registry_tests {
         }
     }
 
+    /// A `\|` inside a table cell is valid Markdown but reaches the terminal
+    /// with its backslash intact. Write the cell without a pipe instead.
+    #[test]
+    fn usage_tables_do_not_escape_pipes() {
+        for tool in registry().tools() {
+            let usage = super::usage::read(tool).unwrap();
+            for (number, line) in usage.lines().enumerate() {
+                let line = line.trim();
+                if line.starts_with('|') && line.contains("\\|") {
+                    panic!(
+                        "{}: usage.md line {} escapes a pipe inside a table; \
+                         rewrite the cell without one",
+                        tool.definition.id,
+                        number + 1
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn every_tool_can_report_whether_it_is_installed() {
         for tool in registry().tools() {

@@ -39,7 +39,7 @@ Comments need `proxy`. Force either with `art serve --mode dir|proxy`, stop with
 
 ## Commands
 
-| | |
+| Command | What it does |
 |---|---|
 | `art publish <file>` | publish `.md` or `.html`; prints the URL |
 | `art list [--json]` | every artifact with its URL |
@@ -47,11 +47,11 @@ Comments need `proxy`. Force either with `art serve --mode dir|proxy`, stop with
 | `art open <slug>` | open in a browser |
 | `art url <slug>` | print the URL |
 | `art rm <slug>...` | delete |
-| `art serve [--mode auto\|dir\|proxy] [--off]` | configure Tailscale serving |
+| `art serve [--mode auto/dir/proxy] [--off]` | configure Tailscale serving |
 | `art comments [slug]` | show open threads (`--resolved`, `--json`) |
 | `art comments reply <slug> <thread> "…"` | reply from the terminal |
 | `art comments resolve <slug> <thread>` | resolve (`--reopen` to undo) |
-| `art comments off\|on <slug>` | turn commenting off or back on |
+| `art comments off` / `on <slug>` | turn commenting off or back on |
 | `art vendor` | download mermaid locally so diagrams work offline |
 
 `publish` flags: `--title` `--slug` `--desc` `--favicon` `--asset` (repeatable),
