@@ -1,6 +1,13 @@
 id = "gtms-alias"
-name = "gtms Graphite alias"
-description = "Install a zsh `gtms` alias for `gt modify && gt submit --stack`."
-version = "1"
-depends = []
+name = "gtms alias"
+description = "A zsh `gtms` alias for `gt modify && gt submit --stack`."
+version = "2"
+next_steps = "Restart your shell (or `source ~/.zshrc`), then run `gtms`."
+
+# A line in .zshrc is not a file we own, so this keeps a status_check.
 status_check = "grep -Fq 'toms-tools:gtms-alias' \"${ZDOTDIR:-$HOME}/.zshrc\" 2>/dev/null"
+
+[[requires]]
+command = "gt"
+fix = "brew install withgraphite/tap/graphite"
+why = "runs the Graphite commands behind the alias"

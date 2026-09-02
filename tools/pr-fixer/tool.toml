@@ -1,6 +1,8 @@
 id = "pr-fixer"
-name = "PR Fixer (Claude Code)"
-description = "Install the /fix-pr slash command that fixes unresolved CR comments on the current PR."
-version = "4"
+name = "PR Fixer"
+description = "A /fix-pr slash command that fixes unresolved review comments on the current PR."
+version = "5"
 depends = ["gh-unresolved"]
-status_check = "test -f \"$HOME/.claude/commands/fix-pr.md\""
+next_steps = "In Claude Code, run `/fix-pr` on a PR branch."
+
+installs = ["~/.claude/commands/fix-pr.md"]

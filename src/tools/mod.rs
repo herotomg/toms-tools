@@ -1,6 +1,9 @@
 pub mod deps;
 pub mod installer;
+pub mod paths;
+pub mod remover;
 pub mod status;
+pub mod survey;
 pub mod usage;
 
 use std::collections::BTreeMap;
@@ -11,15 +14,76 @@ use serde::Deserialize;
 
 static TOOLS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/tools");
 
+/// An external program a tool needs in order to work. Declared here rather than
+/// checked inside install.sh so that `tt` can report — and offer to fix — a
+/// missing dependency at any time, not just once during an install that has
+/// already scrolled off the screen.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Requirement {
+    /// The command to look for on `$PATH`.
+    pub command: String,
+    /// The exact command a user should run to get it. Shown verbatim.
+    pub fix: Option<String>,
+    /// What the tool needs it for, as a sentence fragment: "runs the art CLI".
+    pub why: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Tool {
     pub id: String,
     pub name: String,
     pub description: String,
     pub version: String,
+    /// Other bundled tools that must be installed first.
     #[serde(default)]
     pub depends: Vec<String>,
-    pub status_check: String,
+    /// External commands this tool needs.
+    #[serde(default)]
+    pub requires: Vec<Requirement>,
+    /// Paths the tool creates unconditionally. Their presence *is* the install
+    /// status, and `tt remove` deletes them. Prefer this to `status_check`.
+    #[serde(default)]
+    pub installs: Vec<String>,
+    /// Extra paths to delete on removal if they happen to exist — things
+    /// created conditionally, like a skill linked only when Codex is present.
+    /// Never consulted for status.
+    #[serde(default)]
+    pub cleans: Vec<String>,
+    /// Escape hatch for tools whose installed state is not a set of paths — a
+    /// `gh` alias, a line in `.zshrc`. Takes precedence over `installs`.
+    pub status_check: Option<String>,
+    /// The one thing to do next, in a single line. Shown after install instead
+    /// of the tool's whole manual.
+    pub next_steps: Option<String>,
+}
+
+#[cfg(test)]
+impl Tool {
+    /// A minimal valid tool, for tests that only care about one field.
+    pub fn fixture(id: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            description: format!("the {id} tool"),
+            version: "1".to_owned(),
+            depends: Vec::new(),
+            requires: Vec::new(),
+            installs: Vec::new(),
+            cleans: Vec::new(),
+            status_check: Some("true".to_owned()),
+            next_steps: None,
+        }
+    }
+}
+
+impl Tool {
+    /// Every path this tool is responsible for, in removal order.
+    pub fn owned_paths(&self) -> impl Iterator<Item = &str> {
+        self.installs
+            .iter()
+            .chain(self.cleans.iter())
+            .map(String::as_str)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +135,14 @@ impl Registry {
                         tool.id
                     ));
                 }
+            }
+
+            if tool.status_check.is_none() && tool.installs.is_empty() {
+                return Err(anyhow!(
+                    "tool '{}' must declare `installs` paths or a `status_check`; \
+                     without one there is no way to tell whether it is installed",
+                    tool.id
+                ));
             }
 
             tools.insert(
@@ -186,7 +258,10 @@ mod registry_tests {
     #[test]
     fn every_status_check_parses_as_bash() {
         for tool in registry().tools() {
-            if let Err(error) = parses_as_bash(&tool.definition.status_check) {
+            let Some(check) = &tool.definition.status_check else {
+                continue;
+            };
+            if let Err(error) = parses_as_bash(check) {
                 panic!(
                     "{} has an unparseable status_check: {error}",
                     tool.definition.id
@@ -210,6 +285,52 @@ mod registry_tests {
                 panic!(
                     "{} has an unparseable install.sh: {error}",
                     tool.definition.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_tool_can_report_whether_it_is_installed() {
+        for tool in registry().tools() {
+            let tool = &tool.definition;
+            assert!(
+                tool.status_check.is_some() || !tool.installs.is_empty(),
+                "{} declares neither installs nor status_check",
+                tool.id
+            );
+        }
+    }
+
+    #[test]
+    fn owned_paths_are_absolute_or_home_relative() {
+        for tool in registry().tools() {
+            for path in tool.definition.owned_paths() {
+                assert!(
+                    path.starts_with('~') || path.starts_with('/'),
+                    "{}: '{path}' must be absolute or start with ~",
+                    tool.definition.id
+                );
+            }
+        }
+    }
+
+    /// A requirement with no `fix` is just a complaint — we would be telling
+    /// the user something is wrong without telling them what to run.
+    #[test]
+    fn declared_requirements_are_actionable() {
+        for tool in registry().tools() {
+            for requirement in &tool.definition.requires {
+                assert!(
+                    !requirement.command.trim().is_empty(),
+                    "{} has a requirement with no command",
+                    tool.definition.id
+                );
+                assert!(
+                    requirement.fix.is_some(),
+                    "{}: requirement '{}' needs a `fix`",
+                    tool.definition.id,
+                    requirement.command
                 );
             }
         }

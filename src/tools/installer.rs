@@ -56,8 +56,29 @@ impl InstallError {
 }
 
 pub fn install(tool: &EmbeddedTool, verbose: bool) -> std::result::Result<(), InstallError> {
+    run_script(tool, "install.sh", verbose)?;
+    status::write_installed_version(&tool.definition.id, &tool.definition.version)?;
+    Ok(())
+}
+
+/// Run one of a tool's own scripts — `install.sh`, `uninstall.sh` — from a
+/// throwaway copy of its directory, so the script can read its payload with
+/// relative paths and we leave nothing behind.
+pub fn run_hook(
+    tool: &EmbeddedTool,
+    script_name: &str,
+    verbose: bool,
+) -> std::result::Result<(), InstallError> {
+    run_script(tool, script_name, verbose)
+}
+
+fn run_script(
+    tool: &EmbeddedTool,
+    script_name: &str,
+    verbose: bool,
+) -> std::result::Result<(), InstallError> {
     let temp_dir = create_temp_dir(&tool.definition.id)?;
-    let result = install_inner(tool, &temp_dir, verbose);
+    let result = run_script_inner(tool, script_name, &temp_dir, verbose);
     let cleanup = fs::remove_dir_all(&temp_dir);
 
     if let Err(err) = result {
@@ -69,44 +90,46 @@ pub fn install(tool: &EmbeddedTool, verbose: bool) -> std::result::Result<(), In
     Ok(())
 }
 
-fn install_inner(
+fn run_script_inner(
     tool: &EmbeddedTool,
+    script_name: &str,
     temp_dir: &Path,
     verbose: bool,
 ) -> std::result::Result<(), InstallError> {
     extract_dir(tool.dir(), temp_dir)?;
 
     let bash = which::which("bash").context("bash is required")?;
-    let install_script = temp_dir.join("install.sh");
+    let script = temp_dir.join(script_name);
+
+    let failed = |stdout: String, stderr: String| InstallError::ScriptFailed {
+        tool_id: tool.definition.id.clone(),
+        stdout,
+        stderr,
+    };
+
     if verbose {
         let status = Command::new(&bash)
-            .arg(&install_script)
+            .arg(&script)
             .current_dir(temp_dir)
             .status()
-            .with_context(|| format!("failed to run {install_script:?}"))?;
+            .with_context(|| format!("failed to run {script:?}"))?;
         if !status.success() {
-            return Err(InstallError::ScriptFailed {
-                tool_id: tool.definition.id.clone(),
-                stdout: String::new(),
-                stderr: String::new(),
-            });
+            return Err(failed(String::new(), String::new()));
         }
     } else {
         let output = Command::new(&bash)
-            .arg(&install_script)
+            .arg(&script)
             .current_dir(temp_dir)
             .output()
-            .with_context(|| format!("failed to run {install_script:?}"))?;
+            .with_context(|| format!("failed to run {script:?}"))?;
         if !output.status.success() {
-            return Err(InstallError::ScriptFailed {
-                tool_id: tool.definition.id.clone(),
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            });
+            return Err(failed(
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ));
         }
     }
 
-    status::write_installed_version(&tool.definition.id, &tool.definition.version)?;
     Ok(())
 }
 

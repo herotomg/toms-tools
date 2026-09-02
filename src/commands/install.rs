@@ -1,66 +1,81 @@
-use std::io::{self, IsTerminal, Write};
-
 use anyhow::{anyhow, bail, Result};
-use dialoguer::Confirm;
-use owo_colors::{OwoColorize, Stream, Style};
+use dialoguer::{theme::ColorfulTheme, MultiSelect};
 
 use crate::{
-    cli::InstallArgs,
-    tools::{deps, installer, status::Status, usage, Registry},
+    commands::ui,
+    tools::{deps, installer, status::Status, survey::Survey, EmbeddedTool, Registry},
 };
 
-pub fn run(registry: &Registry, args: &InstallArgs) -> Result<()> {
-    let requested = resolve_requested_ids(registry, args)?;
+/// What to install. Kept separate from the CLI arguments so the guided front
+/// door can ask for the same work without synthesising fake argv.
+pub enum Request {
+    All,
+    /// Only tools that are not installed at all.
+    Missing,
+    Ids(Vec<String>),
+    /// Offer a checklist; fall back to `Missing` when there is no terminal.
+    Pick,
+}
+
+impl Request {
+    pub fn missing() -> Self {
+        Self::Missing
+    }
+
+    pub fn from_args(ids: Vec<String>, all: bool) -> Self {
+        if all {
+            Self::All
+        } else if ids.is_empty() {
+            Self::Pick
+        } else {
+            Self::Ids(ids)
+        }
+    }
+}
+
+pub fn run(registry: &Registry, request: &Request) -> Result<()> {
+    let requested = resolve(registry, request)?;
+
+    if requested.is_empty() {
+        println!("{}", ui::dim("Nothing to install."));
+        return Ok(());
+    }
+
     let ordered = deps::resolve_install_order(registry, &requested)?;
     let mut failures = Vec::new();
+    let mut installed = Vec::new();
 
     for id in ordered {
         let tool = registry
             .get(&id)
             .ok_or_else(|| anyhow!("unknown tool id: {id}"))?;
+        let status = Status::detect(&tool.definition)?;
 
-        match Status::detect(&tool.definition)? {
-            Status::Installed => {
-                print_status_line(
-                    '✓',
-                    &tool.definition.id,
-                    Some(action_suffix(Status::Installed)),
-                    true,
-                );
+        if matches!(status, Status::Installed) {
+            ui::print_status_line('✓', &id, Some(ui::action_suffix(status)), true);
+            continue;
+        }
+
+        match installer::install(tool, false) {
+            Ok(()) => {
+                ui::print_status_line('✓', &id, Some(ui::action_suffix(status)), true);
+                installed.push(tool);
             }
-            status @ (Status::NotInstalled | Status::NeedsUpdate) => {
-                match installer::install(tool, args.verbose) {
-                    Ok(()) => {
-                        print_status_line(
-                            '✓',
-                            &tool.definition.id,
-                            Some(action_suffix(status)),
-                            true,
-                        );
-                        print!("{}", usage::render_post_install(tool)?);
-                    }
-                    Err(err) => {
-                        print_status_line('✗', &tool.definition.id, Some("failed"), false);
-                        if !args.verbose {
-                            if let Some(output) = indented(err.detail_output().unwrap_or("")) {
-                                print!("{output}");
-                            }
-                        }
-
-                        if args.all {
-                            failures.push(tool.definition.id.clone());
-                        } else {
-                            return Err(anyhow!(err));
-                        }
-                    }
+            Err(err) => {
+                ui::print_status_line('✗', &id, Some("failed"), false);
+                if let Some(output) = ui::indented(err.detail_output().unwrap_or("")) {
+                    print!("{output}");
                 }
+                failures.push(id);
             }
         }
     }
 
+    print_next_steps(&installed);
+
     if !failures.is_empty() {
         bail!(
-            "{} tool install(s) failed: {}",
+            "{} tool(s) failed to install: {}",
             failures.len(),
             failures.join(", ")
         );
@@ -69,107 +84,113 @@ pub fn run(registry: &Registry, args: &InstallArgs) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn action_suffix(status: Status) -> &'static str {
-    match status {
-        Status::Installed => "already current",
-        Status::NotInstalled => "installed",
-        Status::NeedsUpdate => "updated",
-    }
-}
-
-pub(crate) fn print_status_line(symbol: char, id: &str, suffix: Option<&str>, success: bool) {
-    let symbol = if success {
-        symbol
-            .to_string()
-            .if_supports_color(Stream::Stdout, |text| {
-                text.style(Style::new().green().bold())
-            })
-            .to_string()
-    } else {
-        symbol
-            .to_string()
-            .if_supports_color(Stream::Stdout, |text| text.style(Style::new().red().bold()))
-            .to_string()
-    };
-    let id = id.if_supports_color(Stream::Stdout, |text| text.cyan());
-
-    match suffix {
-        Some(suffix) => println!("{symbol} {id} {suffix}"),
-        None => println!("{symbol} {id}"),
-    }
-}
-
-pub(crate) fn indented(output: &str) -> Option<String> {
-    let trimmed = output.trim_end();
-    if trimmed.is_empty() {
-        return None;
+/// The whole point of `next_steps`: after installing, say the one thing to do,
+/// not the tool's entire manual. The manual is one command away.
+fn print_next_steps(installed: &[&EmbeddedTool]) {
+    if installed.is_empty() {
+        return;
     }
 
-    Some(
-        trimmed
-            .lines()
-            .map(|line| format!("    {line}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n",
-    )
-}
-
-fn resolve_requested_ids(registry: &Registry, args: &InstallArgs) -> Result<Vec<String>> {
-    if args.all {
-        return Ok(registry.tool_ids());
-    }
-
-    if !args.ids.is_empty() {
-        return Ok(args.ids.clone());
-    }
-
-    if !args.yes {
-        let confirmed = if io::stdin().is_terminal() && io::stdout().is_terminal() {
-            Confirm::new()
-                .with_prompt("Install all tools?")
-                .default(true)
-                .interact()?
-        } else {
-            print!("Install all tools? [Y/n] ");
-            io::stdout().flush()?;
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            matches!(input.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes")
-        };
-
-        if !confirmed {
-            bail!("installation cancelled");
+    println!();
+    for tool in installed {
+        if let Some(next) = &tool.definition.next_steps {
+            println!("  {} {}", ui::tool_id(&tool.definition.id), next);
         }
     }
 
-    Ok(registry.tool_ids())
+    let ids: Vec<&str> = installed
+        .iter()
+        .map(|tool| tool.definition.id.as_str())
+        .collect();
+    println!();
+    println!(
+        "  {}",
+        ui::dim(&format!("Full docs: tt usage {}", ids.join(" ")))
+    );
+}
+
+fn resolve(registry: &Registry, request: &Request) -> Result<Vec<String>> {
+    match request {
+        Request::All => Ok(registry.tool_ids()),
+        Request::Ids(ids) => Ok(ids.clone()),
+        Request::Missing => Ok(not_installed_ids(registry)?),
+        Request::Pick => {
+            if !ui::is_interactive() {
+                return not_installed_ids(registry);
+            }
+            pick(registry)
+        }
+    }
+}
+
+fn not_installed_ids(registry: &Registry) -> Result<Vec<String>> {
+    let survey = Survey::run(registry)?;
+    Ok(survey
+        .not_installed()
+        .iter()
+        .map(|state| state.id().to_owned())
+        .collect())
+}
+
+/// A checklist, pre-ticked with everything not yet installed. This is the
+/// "interactive menu" a picker earns — one screen, no modes to learn.
+fn pick(registry: &Registry) -> Result<Vec<String>> {
+    let survey = Survey::run(registry)?;
+
+    let mut labels = Vec::new();
+    let mut ids = Vec::new();
+    let mut checked = Vec::new();
+
+    for state in &survey.tools {
+        let marker = match state.status {
+            Status::Installed => "installed",
+            Status::NeedsUpdate => "update available",
+            Status::NotInstalled => "not installed",
+        };
+        labels.push(format!(
+            "{:<14} {:<18} {}",
+            state.id(),
+            marker,
+            ui::truncate(&state.tool.definition.description, 46)
+        ));
+        ids.push(state.id().to_owned());
+        checked.push(!state.status.is_installed());
+    }
+
+    let chosen = MultiSelect::with_theme(&ColorfulTheme::default())
+        .with_prompt("Space to toggle, Enter to confirm")
+        .items(&labels)
+        .defaults(&checked)
+        .interact_opt()?;
+
+    match chosen {
+        Some(indexes) => Ok(indexes
+            .into_iter()
+            .map(|index| ids[index].clone())
+            .collect()),
+        None => bail!("cancelled"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::tools::status::Status;
-
-    use super::{action_suffix, indented};
+    use super::Request;
 
     #[test]
-    fn indented_prefixes_each_line() {
-        assert_eq!(
-            indented("first\nsecond").unwrap(),
-            "    first\n    second\n"
-        );
+    fn args_map_to_requests() {
+        assert!(matches!(Request::from_args(vec![], true), Request::All));
+        assert!(matches!(Request::from_args(vec![], false), Request::Pick));
+        assert!(matches!(
+            Request::from_args(vec!["a".to_owned()], false),
+            Request::Ids(ids) if ids == vec!["a".to_owned()]
+        ));
     }
 
     #[test]
-    fn indented_skips_empty_output() {
-        assert_eq!(indented("\n"), None);
-    }
-
-    #[test]
-    fn action_suffix_matches_install_state() {
-        assert_eq!(action_suffix(Status::Installed), "already current");
-        assert_eq!(action_suffix(Status::NotInstalled), "installed");
-        assert_eq!(action_suffix(Status::NeedsUpdate), "updated");
+    fn all_beats_explicit_ids() {
+        assert!(matches!(
+            Request::from_args(vec!["a".to_owned()], true),
+            Request::All
+        ));
     }
 }

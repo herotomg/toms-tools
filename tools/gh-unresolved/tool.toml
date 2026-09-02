@@ -1,6 +1,18 @@
 id = "gh-unresolved"
 name = "gh unresolved"
-description = "Install the `gh unresolved` command to list unresolved CR comments on a PR."
-version = "3"
-depends = []
+description = "A `gh unresolved` command that lists unresolved review comments on a PR."
+version = "4"
+next_steps = "On a PR branch, run `gh unresolved` (or `gh unresolved 123` for a specific PR)."
+
+# A gh alias is not a file, so this cannot be expressed as `installs` paths.
 status_check = "gh alias list 2>/dev/null | awk '/^unresolved:/{found=1; next} found && /^[^[:space:]].*:/{exit} found{print}' | grep -Fq '\"Unknown\"'"
+
+[[requires]]
+command = "gh"
+fix = "brew install gh"
+why = "provides the alias and talks to the GitHub API"
+
+[[requires]]
+command = "jq"
+fix = "brew install jq"
+why = "formats the review threads"

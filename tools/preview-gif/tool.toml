@@ -1,6 +1,34 @@
 id = "preview-gif"
-name = "Preview GIF (Claude Code/Codex skill + screengif)"
-description = "Record polished preview GIFs of a UI with a visible cursor and clicks: the preview-gif skill plus the `screengif` recorder."
-version = "1"
-depends = []
-status_check = "test -x \"$HOME/.local/share/toms-tools/preview-gif/bin/screengif\" && test -d \"$HOME/.local/share/toms-tools/preview-gif/skills/preview-gif\""
+name = "Preview GIF"
+description = "Record preview GIFs of a UI with a visible cursor and visible clicks, for a README or PR."
+version = "2"
+next_steps = "Ask Claude Code for a preview GIF, or run `screengif --list` to see what you can record."
+
+installs = [
+  "~/.local/bin/screengif",
+  "~/.local/share/toms-tools/preview-gif",
+]
+cleans = [
+  "~/.claude/skills/preview-gif",
+  "~/.codex/skills/preview-gif",
+]
+
+[[requires]]
+command = "node"
+fix = "brew install node"
+why = "drives the browser for the preferred recording path"
+
+[[requires]]
+command = "ffmpeg"
+fix = "brew install ffmpeg"
+why = "converts the recording before it becomes a GIF"
+
+[[requires]]
+command = "gifski"
+fix = "brew install gifski"
+why = "encodes the GIF"
+
+[[requires]]
+command = "gifsicle"
+fix = "brew install gifsicle"
+why = "optimises the GIF so it fits in a README"

@@ -43,6 +43,13 @@ pub fn maybe_check(disabled_by_flag: bool, force_refresh: bool) {
     let _ = check_for_update(force_refresh);
 }
 
+/// Update the binary only when there is actually something newer, staying
+/// silent otherwise. `tt update` calls this before updating tools, so one
+/// command makes the whole installation current.
+pub fn update_self_if_newer() {
+    let _ = check_for_update(false);
+}
+
 pub fn run() -> Result<()> {
     println!("Updating tt from the latest release...");
     run_embedded_installer(EMBEDDED_INSTALLER)

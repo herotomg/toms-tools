@@ -1,87 +1,123 @@
 use anyhow::{anyhow, Result};
-use owo_colors::{OwoColorize, Stream};
 
 use crate::{
-    cli::UsageArgs,
+    commands::ui,
     tools::{status::Status, usage as tool_usage, EmbeddedTool, Registry},
 };
 
-pub fn run(registry: &Registry, args: &UsageArgs) -> Result<()> {
-    let selected = resolve_selected_tools(registry, args)?;
+pub enum Request {
+    Installed,
+    All,
+    Ids(Vec<String>),
+}
+
+impl Request {
+    pub fn installed() -> Self {
+        Self::Installed
+    }
+
+    pub fn from_args(ids: Vec<String>, all: bool) -> Self {
+        if all {
+            Self::All
+        } else if ids.is_empty() {
+            Self::Installed
+        } else {
+            Self::Ids(ids)
+        }
+    }
+}
+
+pub fn run(registry: &Registry, request: &Request) -> Result<()> {
+    let selected = resolve(registry, request)?;
 
     if selected.is_empty() {
-        println!(
-            "{}",
-            "No installed tools found.".if_supports_color(Stream::Stdout, |text| text.dimmed())
-        );
-        println!(
-            "{}",
-            "Tip: run tt tools usage --all to show usage for every bundled tool."
-                .if_supports_color(Stream::Stdout, |text| text.dimmed())
-        );
+        println!("{}", ui::dim("No installed tools yet."));
+        println!("{}", ui::dim("Run `tt install` to pick some."));
         return Ok(());
     }
 
-    for (index, (tool, status)) in selected.iter().enumerate() {
-        if index > 0 {
-            println!();
-        }
-
-        print_section(tool, *status)?;
+    // One tool: show it. Several: summarise, because dumping every manual is
+    // how this command became 245 lines of scrollback.
+    if let [(tool, status)] = selected.as_slice() {
+        print!("{}", tool_usage::render_card(tool, *status)?);
+        return Ok(());
     }
 
+    print_summary(&selected);
     Ok(())
 }
 
-fn resolve_selected_tools<'a>(
+fn print_summary(selected: &[(&EmbeddedTool, Status)]) {
+    // This is an index, not the manual — keep every entry to one line each so
+    // it stays scannable. `tt usage <id>` renders the full page.
+    let room = ui::width().saturating_sub(4);
+
+    println!();
+    for (tool, status) in selected {
+        let tool = &tool.definition;
+        println!("  {} {}", ui::status_dot(*status), ui::bold(&tool.name));
+        println!("    {}", ui::dim(&ui::truncate(&tool.description, room)));
+        if let Some(next) = &tool.next_steps {
+            println!("    {}", ui::truncate(next, room));
+        }
+        println!(
+            "    {}",
+            ui::dim(&format!("tt usage {} for the full page", tool.id))
+        );
+        println!();
+    }
+}
+
+fn resolve<'a>(
     registry: &'a Registry,
-    args: &UsageArgs,
+    request: &Request,
 ) -> Result<Vec<(&'a EmbeddedTool, Status)>> {
     let mut selected = Vec::new();
 
-    if args.all {
-        for tool in registry.tools() {
-            selected.push((tool, Status::detect(&tool.definition)?));
+    match request {
+        Request::All => {
+            for tool in registry.tools() {
+                selected.push((tool, Status::detect(&tool.definition)?));
+            }
         }
-        return Ok(selected);
-    }
-
-    if !args.ids.is_empty() {
-        for id in &args.ids {
-            let tool = registry
-                .get(id)
-                .ok_or_else(|| anyhow!("unknown tool id: {id}"))?;
-            selected.push((tool, Status::detect(&tool.definition)?));
+        Request::Ids(ids) => {
+            for id in ids {
+                let tool = registry
+                    .get(id)
+                    .ok_or_else(|| anyhow!("unknown tool id: {id}"))?;
+                selected.push((tool, Status::detect(&tool.definition)?));
+            }
         }
-        return Ok(selected);
-    }
-
-    for tool in registry.tools() {
-        let status = Status::detect(&tool.definition)?;
-        if status.is_installed() {
-            selected.push((tool, status));
+        Request::Installed => {
+            for tool in registry.tools() {
+                let status = Status::detect(&tool.definition)?;
+                if status.is_installed() {
+                    selected.push((tool, status));
+                }
+            }
         }
     }
 
     Ok(selected)
 }
 
-fn print_section(tool: &EmbeddedTool, status: Status) -> Result<()> {
-    print!("{}", tool_usage::render_card(tool, status)?);
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn default_help_includes_usage_subcommand() {
-        let mut command = crate::cli::command();
-        let tools = command.find_subcommand_mut("tools").unwrap();
-        let mut buffer = Vec::new();
-        tools.write_long_help(&mut buffer).unwrap();
+    use super::Request;
 
-        let help = String::from_utf8(buffer).unwrap();
-        assert!(help.contains("usage"));
+    #[test]
+    fn bare_usage_means_what_is_installed() {
+        assert!(matches!(
+            Request::from_args(vec![], false),
+            Request::Installed
+        ));
+    }
+
+    #[test]
+    fn a_single_id_is_requested_directly() {
+        assert!(matches!(
+            Request::from_args(vec!["artifacts".to_owned()], false),
+            Request::Ids(ids) if ids == vec!["artifacts".to_owned()]
+        ));
     }
 }

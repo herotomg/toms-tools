@@ -1,6 +1,23 @@
 id = "agent-matrix"
-name = "General-Purpose Agent Matrix (Claude Code)"
-description = "Install model x effort variants of the general-purpose Claude Code subagent (sonnet/opus/fable x low/medium/high/xhigh/max)."
-version = "1"
-depends = []
-status_check = "for m in sonnet opus fable; do for e in low medium high xhigh max; do test -f \"$HOME/.claude/agents/general-purpose-$m-$e.md\" || exit 1; done; done"
+name = "Agent Matrix"
+description = "The general-purpose Claude Code subagent in 15 model x effort variants, so you can pick reasoning depth explicitly."
+version = "2"
+next_steps = "Ask Claude to use a named agent, e.g. `general-purpose-opus-low` or `general-purpose-fable-max`."
+
+installs = [
+  "~/.claude/agents/general-purpose-sonnet-low.md",
+  "~/.claude/agents/general-purpose-sonnet-medium.md",
+  "~/.claude/agents/general-purpose-sonnet-high.md",
+  "~/.claude/agents/general-purpose-sonnet-xhigh.md",
+  "~/.claude/agents/general-purpose-sonnet-max.md",
+  "~/.claude/agents/general-purpose-opus-low.md",
+  "~/.claude/agents/general-purpose-opus-medium.md",
+  "~/.claude/agents/general-purpose-opus-high.md",
+  "~/.claude/agents/general-purpose-opus-xhigh.md",
+  "~/.claude/agents/general-purpose-opus-max.md",
+  "~/.claude/agents/general-purpose-fable-low.md",
+  "~/.claude/agents/general-purpose-fable-medium.md",
+  "~/.claude/agents/general-purpose-fable-high.md",
+  "~/.claude/agents/general-purpose-fable-xhigh.md",
+  "~/.claude/agents/general-purpose-fable-max.md",
+]

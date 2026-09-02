@@ -6,11 +6,10 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use owo_colors::{OwoColorize, Stream};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
-use super::Tool;
+use super::{paths, Requirement, Tool};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -35,7 +34,7 @@ impl Status {
     }
 
     pub fn detect(tool: &Tool) -> Result<Self> {
-        if !run_status_check(&tool.status_check)? {
+        if !is_present(tool)? {
             return Ok(Self::NotInstalled);
         }
 
@@ -48,23 +47,6 @@ impl Status {
 
     pub fn is_installed(self) -> bool {
         !matches!(self, Self::NotInstalled)
-    }
-
-    pub fn label(self) -> String {
-        match self {
-            Status::Installed => self
-                .plain_label()
-                .if_supports_color(Stream::Stdout, |text| text.green())
-                .to_string(),
-            Status::NotInstalled => self
-                .plain_label()
-                .if_supports_color(Stream::Stdout, |text| text.dimmed())
-                .to_string(),
-            Status::NeedsUpdate => self
-                .plain_label()
-                .if_supports_color(Stream::Stdout, |text| text.yellow())
-                .to_string(),
-        }
     }
 }
 
@@ -80,6 +62,49 @@ pub fn write_installed_version(id: &str, version: &str) -> Result<()> {
     let content = toml::to_string_pretty(&installed)?;
     fs::write(&path, content).with_context(|| format!("failed to write {path:?}"))?;
     Ok(())
+}
+
+/// Drop a tool's recorded version, so it reads as not installed again.
+pub fn forget_installed_version(id: &str) -> Result<()> {
+    let path = installed_file_path()?;
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let mut installed = read_installed_state()?;
+    if installed.tools.remove(id).is_none() {
+        return Ok(());
+    }
+
+    let content = toml::to_string_pretty(&installed)?;
+    fs::write(&path, content).with_context(|| format!("failed to write {path:?}"))?;
+    Ok(())
+}
+
+/// Is the tool on disk at all? A hand-written `status_check` wins when present;
+/// otherwise the declared `installs` paths must all exist.
+fn is_present(tool: &Tool) -> Result<bool> {
+    if let Some(command) = &tool.status_check {
+        return run_status_check(command);
+    }
+
+    Ok(!tool.installs.is_empty()
+        && tool
+            .installs
+            .iter()
+            .all(|path| paths::exists(&paths::expand(path))))
+}
+
+/// External commands the tool declares that are not on `$PATH`.
+///
+/// Deliberately checks the *process* `PATH` rather than a login shell: if a
+/// binary we just linked into `~/.local/bin` is invisible here, it is invisible
+/// to the user's next command too, and that is worth telling them about.
+pub fn missing_requirements(tool: &Tool) -> Vec<&Requirement> {
+    tool.requires
+        .iter()
+        .filter(|requirement| which::which(&requirement.command).is_err())
+        .collect()
 }
 
 fn run_status_check(command: &str) -> Result<bool> {

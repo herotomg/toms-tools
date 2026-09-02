@@ -1,6 +1,13 @@
 id = "jsut-alias"
-name = "jsut → just alias"
-description = "Install a zsh alias so a `jsut` typo runs `just`."
-version = "1"
-depends = []
+name = "jsut alias"
+description = "A zsh `jsut` alias for `just`."
+version = "2"
+next_steps = "Restart your shell (or `source ~/.zshrc`), then run `jsut`."
+
+# A line in .zshrc is not a file we own, so this keeps a status_check.
 status_check = "grep -Fq 'toms-tools:jsut-alias' \"${ZDOTDIR:-$HOME}/.zshrc\" 2>/dev/null"
+
+[[requires]]
+command = "just"
+fix = "brew install just"
+why = "is what the alias runs"

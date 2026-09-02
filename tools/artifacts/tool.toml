@@ -1,6 +1,26 @@
 id = "artifacts"
-name = "Artifacts (art CLI + Claude Code/Codex skills)"
-description = "Publish Markdown/HTML to your tailnet as a commentable page: the `art` CLI plus the artifact-design and publish-artifact skills."
-version = "1"
-depends = []
-status_check = "test -x \"$HOME/.local/share/toms-tools/artifacts/bin/art\" && test -d \"$HOME/.local/share/toms-tools/artifacts/skills/artifact-design\" && test -d \"$HOME/.local/share/toms-tools/artifacts/skills/publish-artifact\""
+name = "Artifacts"
+description = "Publish Markdown or HTML to your tailnet as a page teammates can read and comment on."
+version = "2"
+next_steps = "Run `art serve` once to point Tailscale at the store, then `art publish notes.md`."
+
+installs = [
+  "~/.local/bin/art",
+  "~/.local/share/toms-tools/artifacts",
+]
+cleans = [
+  "~/.claude/skills/artifact-design",
+  "~/.claude/skills/publish-artifact",
+  "~/.codex/skills/artifact-design",
+  "~/.codex/skills/publish-artifact",
+]
+
+[[requires]]
+command = "uv"
+fix = "brew install uv"
+why = "runs the art CLI"
+
+[[requires]]
+command = "tailscale"
+fix = "brew install --cask tailscale"
+why = "serves your artifacts over the tailnet"

@@ -1,59 +1,63 @@
-use std::io::{self, IsTerminal};
-
 use anyhow::{anyhow, bail, Result};
-use dialoguer::Confirm;
-use owo_colors::{OwoColorize, Stream};
 
 use crate::{
-    cli::UpdateArgs,
-    tools::{deps, installer, status::Status, Registry, Tool},
+    commands::ui,
+    tools::{deps, installer, status::Status, survey::Survey, Registry},
 };
 
-use super::install::{action_suffix, indented, print_status_line};
+pub enum Request {
+    All,
+    /// Only tools whose recorded version is behind the bundled one.
+    Outdated,
+    Ids(Vec<String>),
+}
 
-pub fn run(registry: &Registry, args: &UpdateArgs) -> Result<()> {
-    let requested = resolve_requested_ids(registry, args, Status::detect)?;
+impl Request {
+    pub fn outdated() -> Self {
+        Self::Outdated
+    }
+
+    pub fn from_args(ids: Vec<String>, all: bool) -> Self {
+        if all {
+            Self::All
+        } else if ids.is_empty() {
+            Self::Outdated
+        } else {
+            Self::Ids(ids)
+        }
+    }
+}
+
+pub fn run(registry: &Registry, request: &Request) -> Result<()> {
+    let requested = resolve(registry, request)?;
+
     if requested.is_empty() {
-        println!(
-            "{}",
-            "All bundled tools are already current."
-                .if_supports_color(Stream::Stdout, |text| text.dimmed())
-        );
+        println!("{}", ui::dim("All tools are already current."));
         return Ok(());
     }
 
     let ordered = deps::resolve_install_order(registry, &requested)?;
-    let continue_on_error = ordered.len() > 1;
     let mut failures = Vec::new();
 
     for id in ordered {
         let tool = registry
             .get(&id)
             .ok_or_else(|| anyhow!("unknown tool id: {id}"))?;
-
         let status = Status::detect(&tool.definition)?;
+
         if matches!(status, Status::Installed) {
-            print_status_line('✓', &tool.definition.id, Some(action_suffix(status)), true);
+            ui::print_status_line('✓', &id, Some(ui::action_suffix(status)), true);
             continue;
         }
 
-        match installer::install(tool, args.verbose) {
-            Ok(()) => {
-                print_status_line('✓', &tool.definition.id, Some(action_suffix(status)), true);
-            }
+        match installer::install(tool, false) {
+            Ok(()) => ui::print_status_line('✓', &id, Some(ui::action_suffix(status)), true),
             Err(err) => {
-                print_status_line('✗', &tool.definition.id, Some("failed"), false);
-                if !args.verbose {
-                    if let Some(output) = indented(err.detail_output().unwrap_or("")) {
-                        print!("{output}");
-                    }
+                ui::print_status_line('✗', &id, Some("failed"), false);
+                if let Some(output) = ui::indented(err.detail_output().unwrap_or("")) {
+                    print!("{output}");
                 }
-
-                if continue_on_error {
-                    failures.push(tool.definition.id.clone());
-                } else {
-                    return Err(anyhow!(err));
-                }
+                failures.push(id);
             }
         }
     }
@@ -69,129 +73,46 @@ pub fn run(registry: &Registry, args: &UpdateArgs) -> Result<()> {
     Ok(())
 }
 
-fn resolve_requested_ids<F>(
-    registry: &Registry,
-    args: &UpdateArgs,
-    detect_status: F,
-) -> Result<Vec<String>>
-where
-    F: Fn(&Tool) -> Result<Status>,
-{
-    if args.all {
-        return Ok(registry.tool_ids());
-    }
-
-    if !args.ids.is_empty() {
-        return Ok(args.ids.clone());
-    }
-
-    let mut outdated = Vec::new();
-    for tool in registry.tools() {
-        if matches!(detect_status(&tool.definition)?, Status::NeedsUpdate) {
-            outdated.push(tool.definition.id.clone());
+fn resolve(registry: &Registry, request: &Request) -> Result<Vec<String>> {
+    match request {
+        Request::All => Ok(registry.tool_ids()),
+        Request::Ids(ids) => Ok(ids.clone()),
+        Request::Outdated => {
+            let survey = Survey::run(registry)?;
+            Ok(survey
+                .outdated()
+                .iter()
+                .map(|state| state.id().to_owned())
+                .collect())
         }
-    }
-
-    if outdated.is_empty() || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return Ok(outdated);
-    }
-
-    let confirmed = Confirm::new()
-        .with_prompt(format!("Update {} outdated tool(s)?", outdated.len()))
-        .default(true)
-        .interact()?;
-
-    if confirmed {
-        Ok(outdated)
-    } else {
-        bail!("update cancelled");
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use super::Request;
 
-    use include_dir::Dir;
-
-    use crate::{
-        cli::UpdateArgs,
-        tools::{status::Status, EmbeddedTool, Registry, Tool},
-    };
-
-    use super::resolve_requested_ids;
-
-    static EMPTY_DIR: Dir<'_> = Dir::new(".", &[]);
-
-    fn registry(ids: &[&str]) -> Registry {
-        let tools = ids
-            .iter()
-            .map(|id| {
-                (
-                    (*id).to_owned(),
-                    EmbeddedTool {
-                        definition: Tool {
-                            id: (*id).to_owned(),
-                            name: (*id).to_owned(),
-                            description: String::new(),
-                            version: "1.0.0".to_owned(),
-                            depends: Vec::new(),
-                            status_check: "true".to_owned(),
-                        },
-                        dir: &EMPTY_DIR,
-                    },
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-
-        Registry { tools }
+    #[test]
+    fn no_arguments_means_whatever_is_outdated() {
+        assert!(matches!(
+            Request::from_args(vec![], false),
+            Request::Outdated
+        ));
     }
 
     #[test]
-    fn defaults_to_outdated_tools() {
-        let registry = registry(&["a", "b", "c"]);
-        let args = UpdateArgs {
-            ids: Vec::new(),
-            all: false,
-            verbose: false,
-        };
-
-        let selected = resolve_requested_ids(&registry, &args, |tool| {
-            Ok(match tool.id.as_str() {
-                "b" => Status::NeedsUpdate,
-                _ => Status::Installed,
-            })
-        })
-        .unwrap();
-
-        assert_eq!(selected, vec!["b"]);
+    fn explicit_ids_are_taken_literally() {
+        assert!(matches!(
+            Request::from_args(vec!["pr-fixer".to_owned()], false),
+            Request::Ids(ids) if ids == vec!["pr-fixer".to_owned()]
+        ));
     }
 
     #[test]
-    fn all_selects_every_tool() {
-        let registry = registry(&["a", "b"]);
-        let args = UpdateArgs {
-            ids: Vec::new(),
-            all: true,
-            verbose: false,
-        };
-
-        let selected = resolve_requested_ids(&registry, &args, |_| Ok(Status::Installed)).unwrap();
-
-        assert_eq!(selected, vec!["a", "b"]);
-    }
-
-    #[test]
-    fn explicit_ids_take_priority() {
-        let registry = registry(&["a", "b"]);
-        let args = UpdateArgs {
-            ids: vec!["b".to_owned()],
-            all: false,
-            verbose: false,
-        };
-
-        let selected = resolve_requested_ids(&registry, &args, |_| Ok(Status::Installed)).unwrap();
-
-        assert_eq!(selected, vec!["b"]);
+    fn all_wins_over_ids() {
+        assert!(matches!(
+            Request::from_args(vec!["pr-fixer".to_owned()], true),
+            Request::All
+        ));
     }
 }

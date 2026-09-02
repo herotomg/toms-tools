@@ -1,162 +1,103 @@
-use std::{
-    env,
-    io::{self, IsTerminal},
-};
+//! `tt list` — one line per tool, grouped by what you would do about it.
+//!
+//! This was a bordered table. Seven tools rendered as 48 lines, with names
+//! truncated to 17 characters and every description wrapped across six rows.
+//! A list of seven short things does not need column separators.
 
 use anyhow::Result;
-use comfy_table::{
-    presets::{ASCII_FULL, UTF8_FULL},
-    ColumnConstraint::UpperBoundary,
-    ContentArrangement, Table,
-    Width::{Fixed, Percentage},
-};
-use owo_colors::{OwoColorize, Stream, Style};
-use terminal_size::{terminal_size, Width};
 
-use crate::tools::{status::Status, Registry};
+use crate::{
+    commands::ui,
+    tools::{
+        status::Status,
+        survey::{Survey, ToolState},
+        Registry,
+    },
+};
 
 pub fn run(registry: &Registry) -> Result<()> {
-    let mut table = build_table(terminal_width(), io::stdout().is_terminal());
-    let mut has_updates = false;
-    table.set_header(vec![
-        "ID".if_supports_color(Stream::Stdout, |text| text.bold())
-            .to_string(),
-        "Name"
-            .if_supports_color(Stream::Stdout, |text| text.bold())
-            .to_string(),
-        "Description"
-            .if_supports_color(Stream::Stdout, |text| text.bold())
-            .to_string(),
-        "Status"
-            .if_supports_color(Stream::Stdout, |text| text.bold())
-            .to_string(),
-    ]);
+    let survey = Survey::run(registry)?;
 
-    for tool in registry.tools() {
-        let status = Status::detect(&tool.definition)?;
-        has_updates |= matches!(status, Status::NeedsUpdate);
-        table.add_row(vec![
-            tool.definition
-                .id
-                .as_str()
-                .if_supports_color(Stream::Stdout, |text| {
-                    text.style(Style::new().cyan().bold())
-                })
-                .to_string(),
-            tool.definition.name.clone(),
-            tool.definition.description.clone(),
-            status.label(),
-        ]);
-    }
+    let groups: [(&str, Vec<&ToolState<'_>>); 3] = [
+        ("Updates available", survey.outdated()),
+        (
+            "Installed",
+            survey
+                .tools
+                .iter()
+                .filter(|state| matches!(state.status, Status::Installed))
+                .collect(),
+        ),
+        ("Not installed", survey.not_installed()),
+    ];
 
-    println!("{table}");
-    if let Some(tip) = update_tip(has_updates) {
+    println!();
+    for (title, states) in groups {
+        if states.is_empty() {
+            continue;
+        }
+
         println!(
-            "{}",
-            tip.if_supports_color(Stream::Stdout, |text| text.dimmed())
+            "  {} {}",
+            ui::heading(title),
+            ui::dim(&format!("({})", states.len()))
         );
+        for state in states {
+            print_row(state);
+        }
+        println!();
     }
+
+    print_footer(&survey);
     Ok(())
 }
 
-fn update_tip(has_updates: bool) -> Option<&'static str> {
-    has_updates.then_some("Tip: run tt tools update to update outdated bundled tools.")
-}
+fn print_row(state: &ToolState<'_>) {
+    let id_width = 16;
+    let description_width = ui::width().saturating_sub(id_width + 8).max(24);
 
-fn build_table(width: u16, is_terminal: bool) -> Table {
-    let mut table = Table::new();
-    table.load_preset(table_preset(is_terminal));
-    table.set_content_arrangement(ContentArrangement::Dynamic);
-    table.set_width(width);
-    table.set_constraints(vec![
-        UpperBoundary(Fixed(17)),
-        UpperBoundary(Fixed(17)),
-        UpperBoundary(Percentage(100)),
-        UpperBoundary(Fixed(14)),
-    ]);
-    table
-}
+    let mut line = format!(
+        "    {} {:<id_width$} {}",
+        ui::status_dot(state.status),
+        ui::tool_id(state.id()),
+        ui::dim(&ui::truncate(
+            &state.tool.definition.description,
+            description_width
+        )),
+    );
 
-fn table_preset(is_terminal: bool) -> &'static str {
-    if is_terminal {
-        UTF8_FULL
-    } else {
-        ASCII_FULL
-    }
-}
-
-fn terminal_width() -> u16 {
-    env_width(env::var("COLUMNS").ok().as_deref())
-        .or_else(|| terminal_size().map(|(Width(width), _)| width))
-        .unwrap_or(80)
-}
-
-fn env_width(value: Option<&str>) -> Option<u16> {
-    value
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|width| *width > 0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{build_table, env_width, table_preset, update_tip};
-
-    #[test]
-    fn parses_columns_from_env() {
-        assert_eq!(env_width(Some("60")), Some(60));
-        assert_eq!(env_width(Some("0")), None);
-        assert_eq!(env_width(Some("wide")), None);
+    // A tool that is installed but cannot run is the thing most worth knowing,
+    // so it goes on the row rather than in a footnote.
+    if state.is_blocked() {
+        let names: Vec<&str> = state
+            .missing
+            .iter()
+            .map(|requirement| requirement.command.as_str())
+            .collect();
+        line.push_str(&format!(
+            " {}",
+            ui::dim(&format!("· needs {}", names.join(", ")))
+        ));
     }
 
-    #[test]
-    fn keeps_ansi_sequences_intact_when_wrapping_tty_output() {
-        let mut table = build_table(60, true);
-        table.set_header(vec![
-            "\u{1b}[1mID\u{1b}[0m".to_string(),
-            "\u{1b}[1mName\u{1b}[0m".to_string(),
-            "\u{1b}[1mDescription\u{1b}[0m".to_string(),
-            "\u{1b}[1mStatus\u{1b}[0m".to_string(),
-        ]);
-        table.add_row(vec![
-            "\u{1b}[36;1mgh-unresolved\u{1b}[0m".to_string(),
-            "gh unresolved".to_string(),
-            "Install the `gh unresolved` command to list unresolved CR comments on a PR."
-                .to_string(),
-            "\u{1b}[32mInstalled\u{1b}[39m".to_string(),
-        ]);
+    println!("{line}");
+}
 
-        let rendered = table.to_string();
+fn print_footer(survey: &Survey<'_>) {
+    let mut hints = Vec::new();
 
-        assert!(rendered.contains("\u{1b}[1mStatus\u{1b}[0m"));
-        assert!(rendered.contains("\u{1b}[36;1mgh-unresolved\u{1b}[0m"));
-        assert!(rendered.contains("\u{1b}[32mInstalled\u{1b}[39m"));
+    if !survey.not_installed().is_empty() {
+        hints.push("tt install");
+    }
+    if !survey.outdated().is_empty() {
+        hints.push("tt update");
+    }
+    if !survey.blocked().is_empty() || !survey.bin_dir_on_path {
+        hints.push("tt");
     }
 
-    #[test]
-    fn uses_ascii_borders_for_non_tty_output() {
-        let mut table = build_table(60, false);
-        table.set_header(vec!["ID", "Name", "Description", "Status"]);
-        table.add_row(vec![
-            "gh-unresolved",
-            "gh unresolved",
-            "Install the tool.",
-            "Installed",
-        ]);
-
-        let rendered = table.to_string();
-
-        assert_eq!(table_preset(false), comfy_table::presets::ASCII_FULL);
-        assert!(rendered.contains('+'));
-        assert!(rendered.contains('|'));
-        assert!(!rendered.contains('┌'));
-    }
-
-    #[test]
-    fn shows_update_tip_only_when_needed() {
-        assert_eq!(
-            update_tip(true),
-            Some("Tip: run tt tools update to update outdated bundled tools.")
-        );
-        assert_eq!(update_tip(false), None);
+    if !hints.is_empty() {
+        println!("  {}", ui::dim(&format!("Next: {}", hints.join("  ·  "))));
+        println!();
     }
 }

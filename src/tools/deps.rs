@@ -66,13 +66,10 @@ mod tests {
                 (
                     (*id).to_owned(),
                     EmbeddedTool {
-                        definition: Tool {
-                            id: (*id).to_owned(),
-                            name: (*id).to_owned(),
-                            description: String::new(),
-                            version: "1".to_owned(),
-                            depends: depends.iter().map(|dep| (*dep).to_owned()).collect(),
-                            status_check: "true".to_owned(),
+                        definition: {
+                            let mut tool = Tool::fixture(id);
+                            tool.depends = depends.iter().map(|dep| (*dep).to_owned()).collect();
+                            tool
                         },
                         dir: &EMPTY_DIR,
                     },

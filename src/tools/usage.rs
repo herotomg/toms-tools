@@ -17,10 +17,6 @@ pub fn read(tool: &EmbeddedTool) -> Result<&'static str> {
         .context("usage.md is not valid UTF-8")
 }
 
-pub fn render_post_install(tool: &EmbeddedTool) -> Result<String> {
-    render_card(tool, Status::Installed)
-}
-
 pub fn render_card(tool: &EmbeddedTool, status: Status) -> Result<String> {
     Ok(render_for_terminal(
         read(tool)?,

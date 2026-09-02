@@ -2,14 +2,13 @@ use anyhow::Result;
 use clap::{
     builder::PossibleValuesParser, Args, CommandFactory, FromArgMatches, Parser, Subcommand,
 };
-use owo_colors::{OwoColorize, Stream};
 
 use crate::{commands, tools::Registry, update};
 
 #[derive(Debug, Parser)]
 #[command(name = "tt")]
 #[command(version)]
-#[command(about = "Tom's Tools CLI")]
+#[command(about = "Tom's Tools — run `tt` on its own and it will tell you what to do")]
 pub struct Cli {
     #[arg(long, hide = true, global = true)]
     no_update_check: bool,
@@ -19,11 +18,27 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Update tt to the latest released version
-    Update,
+    /// Install tools (no arguments opens a checklist)
+    Install(InstallArgs),
 
-    Tools(ToolsArgs),
+    /// Update tt itself and any outdated tools
+    Update(UpdateArgs),
+
+    /// Remove installed tools
+    Remove(RemoveArgs),
+
+    /// List every tool and its status
+    List,
+
+    /// Show what a tool does and how to use it
+    Usage(UsageArgs),
+
+    /// Install shell completions
     Completions(commands::completions::CompletionsArgs),
+
+    /// Former command layout, kept working. Prefer `tt install` and friends.
+    #[command(hide = true)]
+    Tools(ToolsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -34,16 +49,10 @@ struct ToolsArgs {
 
 #[derive(Debug, Subcommand)]
 enum ToolsCommand {
-    /// List bundled tools and their install status
     List,
-
-    /// Install one or more tools
     Install(InstallArgs),
-
-    /// Update outdated bundled tools, or install/update explicit tool ids
     Update(UpdateArgs),
-
-    /// Show usage notes for installed tools or selected tool ids
+    Remove(RemoveArgs),
     Usage(UsageArgs),
 }
 
@@ -51,57 +60,107 @@ enum ToolsCommand {
 pub struct InstallArgs {
     #[arg(value_name = "IDS", value_parser = tool_id_value_parser())]
     pub ids: Vec<String>,
+    /// Install every bundled tool
     #[arg(short, long)]
     pub all: bool,
-    #[arg(short, long)]
+    #[arg(short, long, hide = true)]
     pub verbose: bool,
-    #[arg(short = 'y', long)]
+    #[arg(short = 'y', long, hide = true)]
     pub yes: bool,
 }
 
 #[derive(Debug, Clone, Args)]
 pub struct UpdateArgs {
-    #[arg(value_name = "IDS", value_parser = tool_id_value_parser(), conflicts_with = "all")]
+    #[arg(value_name = "IDS", value_parser = tool_id_value_parser(), conflicts_with_all = ["all", "self_only"])]
     pub ids: Vec<String>,
+    /// Reinstall every tool, current or not
     #[arg(short, long)]
     pub all: bool,
-    #[arg(short, long)]
+    /// Only update the tt binary, leave tools alone
+    #[arg(long = "self", name = "self_only")]
+    pub self_only: bool,
+    #[arg(short, long, hide = true)]
     pub verbose: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct RemoveArgs {
+    #[arg(value_name = "IDS", value_parser = tool_id_value_parser(), required = true)]
+    pub ids: Vec<String>,
+    /// Skip the confirmation prompt
+    #[arg(short = 'y', long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Clone, Args)]
 pub struct UsageArgs {
     #[arg(value_name = "IDS", value_parser = tool_id_value_parser())]
     pub ids: Vec<String>,
+    /// Include tools you have not installed
     #[arg(short, long, conflicts_with = "ids")]
     pub all: bool,
 }
 
 pub fn run() -> Result<()> {
     let cli = parse();
-    if !matches!(cli.command.as_ref(), Some(Commands::Update)) {
+
+    // The update command does its own checking; everywhere else this is the
+    // once-a-day nudge.
+    if !matches!(cli.command.as_ref(), Some(Commands::Update(_))) {
         update::maybe_check(cli.no_update_check, false);
     }
 
-    match cli.command {
-        Some(Commands::Update) => update::run(),
-        Some(Commands::Tools(args)) => {
-            let registry = Registry::load()?;
+    let command = match cli.command {
+        Some(Commands::Tools(tools)) => Some(flatten(tools.command)),
+        other => other,
+    };
 
-            match args.command {
-                ToolsCommand::List => commands::list::run(&registry),
-                ToolsCommand::Install(args) => commands::install::run(&registry, &args),
-                ToolsCommand::Update(args) => commands::tools_update::run(&registry, &args),
-                ToolsCommand::Usage(args) => commands::usage::run(&registry, &args),
-            }
-        }
+    let registry = Registry::load()?;
+
+    match command {
+        Some(Commands::Install(args)) => commands::install::run(
+            &registry,
+            &commands::install::Request::from_args(args.ids, args.all),
+        ),
+        Some(Commands::Update(args)) => update_command(&registry, args),
+        Some(Commands::Remove(args)) => commands::remove::run(&registry, &args.ids, args.yes),
+        Some(Commands::List) => commands::list::run(&registry),
+        Some(Commands::Usage(args)) => commands::usage::run(
+            &registry,
+            &commands::usage::Request::from_args(args.ids, args.all),
+        ),
         Some(Commands::Completions(args)) => commands::completions::run(args),
-        None => {
-            let mut command = command();
-            command.print_long_help()?;
-            println!();
-            Ok(())
-        }
+        Some(Commands::Tools(_)) => unreachable!("flattened above"),
+        None => commands::home::run(&registry),
+    }
+}
+
+/// `tt update` means "make everything current" — the binary and the tools.
+/// Splitting those across two commands was a distinction only the author cared
+/// about.
+fn update_command(registry: &Registry, args: UpdateArgs) -> Result<()> {
+    if args.self_only {
+        return update::run();
+    }
+
+    let targeted = args.all || !args.ids.is_empty();
+    if !targeted {
+        update::update_self_if_newer();
+    }
+
+    commands::tools_update::run(
+        registry,
+        &commands::tools_update::Request::from_args(args.ids, args.all),
+    )
+}
+
+fn flatten(command: ToolsCommand) -> Commands {
+    match command {
+        ToolsCommand::List => Commands::List,
+        ToolsCommand::Install(args) => Commands::Install(args),
+        ToolsCommand::Update(args) => Commands::Update(args),
+        ToolsCommand::Remove(args) => Commands::Remove(args),
+        ToolsCommand::Usage(args) => Commands::Usage(args),
     }
 }
 
@@ -115,10 +174,7 @@ fn parse() -> Cli {
 }
 
 fn after_help() -> String {
-    format!(
-        "Tip: run {} to install every tool in one go.",
-        "tt tools install --all".if_supports_color(Stream::Stdout, |text| text.cyan())
-    )
+    "Run tt with no arguments and it will show you what needs doing.".to_owned()
 }
 
 fn tool_id_value_parser() -> PossibleValuesParser {
@@ -129,91 +185,93 @@ fn tool_id_value_parser() -> PossibleValuesParser {
 mod tests {
     use clap::Parser;
 
-    use super::{after_help, Cli, InstallArgs, UpdateArgs};
+    use super::{Cli, Commands, ToolsCommand};
 
     #[test]
     fn allows_running_without_a_subcommand() {
-        assert!(Cli::try_parse_from(["tt"]).is_ok());
+        let cli = Cli::try_parse_from(["tt"]).unwrap();
+        assert!(cli.command.is_none());
     }
 
     #[test]
-    fn after_help_tip_uses_plain_command_text() {
-        let help = after_help();
-        assert!(help.contains("tt tools install --all"));
-        assert!(!help.contains('`'));
+    fn exposes_the_flat_commands() {
+        for (argv, matches) in [
+            (vec!["tt", "install"], "install"),
+            (vec!["tt", "update"], "update"),
+            (vec!["tt", "list"], "list"),
+            (vec!["tt", "usage"], "usage"),
+            (vec!["tt", "remove", "jsut-alias"], "remove"),
+        ] {
+            let cli = Cli::try_parse_from(&argv)
+                .unwrap_or_else(|error| panic!("{matches} should parse: {error}"));
+            assert!(cli.command.is_some(), "{matches} produced no command");
+        }
+    }
+
+    /// Muscle memory and any script written against the old layout must keep
+    /// working, so the nested form stays — just hidden from help.
+    #[test]
+    fn the_old_tools_subcommands_still_parse() {
+        for argv in [
+            vec!["tt", "tools", "list"],
+            vec!["tt", "tools", "install", "--all"],
+            vec!["tt", "tools", "update"],
+            vec!["tt", "tools", "usage"],
+        ] {
+            let cli = Cli::try_parse_from(&argv)
+                .unwrap_or_else(|error| panic!("{argv:?} should still parse: {error}"));
+            assert!(matches!(cli.command, Some(Commands::Tools(_))));
+        }
     }
 
     #[test]
-    fn tools_help_lists_usage_subcommand() {
-        let mut command = super::command();
-        let tools = command.find_subcommand_mut("tools").unwrap();
-        let mut buffer = Vec::new();
-        tools.write_long_help(&mut buffer).unwrap();
-
-        let help = String::from_utf8(buffer).unwrap();
-        assert!(help.contains("update"));
-        assert!(help.contains("usage"));
+    fn old_and_new_forms_resolve_to_the_same_command() {
+        let old = Cli::try_parse_from(["tt", "tools", "list"]).unwrap();
+        let Some(Commands::Tools(tools)) = old.command else {
+            panic!("expected the nested form");
+        };
+        assert!(matches!(super::flatten(tools.command), Commands::List));
     }
 
     #[test]
-    fn help_lists_update_subcommand_and_hides_old_flag() {
+    fn update_accepts_self_only() {
+        let cli = Cli::try_parse_from(["tt", "update", "--self"]).unwrap();
+        let Some(Commands::Update(args)) = cli.command else {
+            panic!("expected update");
+        };
+        assert!(args.self_only);
+    }
+
+    #[test]
+    fn remove_requires_at_least_one_id() {
+        assert!(Cli::try_parse_from(["tt", "remove"]).is_err());
+    }
+
+    #[test]
+    fn unknown_tool_ids_are_rejected_before_anything_runs() {
+        assert!(Cli::try_parse_from(["tt", "install", "no-such-tool"]).is_err());
+    }
+
+    #[test]
+    fn help_leads_with_the_flat_commands() {
         let mut command = super::command();
         let mut buffer = Vec::new();
         command.write_long_help(&mut buffer).unwrap();
-
         let help = String::from_utf8(buffer).unwrap();
-        assert!(help.contains("update"));
-        assert!(!help.contains("--check-update"));
+
+        for expected in ["install", "update", "remove", "list", "usage"] {
+            assert!(help.contains(expected), "help should mention {expected}");
+        }
+        // The legacy layout is hidden, not advertised.
+        assert!(!help.contains("Former command layout"));
     }
 
     #[test]
-    fn parses_update_subcommand() {
-        let cli = Cli::try_parse_from(["tt", "update"]).unwrap();
-
-        assert!(matches!(cli.command, Some(super::Commands::Update)));
-    }
-
-    #[test]
-    fn install_args_support_verbose_flag() {
-        let cli = Cli::try_parse_from(["tt", "tools", "install", "--all", "-v"]).unwrap();
-
-        let args = match cli.command.unwrap() {
-            super::Commands::Tools(tools) => match tools.command {
-                super::ToolsCommand::Install(args) => args,
-                _ => panic!("expected install command"),
-            },
-            _ => panic!("expected tools command"),
-        };
-
-        assert!(matches!(
-            args,
-            InstallArgs {
-                all: true,
-                verbose: true,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn tools_update_args_support_verbose_flag() {
-        let cli = Cli::try_parse_from(["tt", "tools", "update", "--all", "-v"]).unwrap();
-
-        let args = match cli.command.unwrap() {
-            super::Commands::Tools(tools) => match tools.command {
-                super::ToolsCommand::Update(args) => args,
-                _ => panic!("expected update command"),
-            },
-            _ => panic!("expected tools command"),
-        };
-
-        assert!(matches!(
-            args,
-            UpdateArgs {
-                all: true,
-                verbose: true,
-                ..
-            }
-        ));
+    fn tools_command_variants_are_exhaustively_flattened() {
+        // A compile-time reminder: adding a ToolsCommand variant forces a
+        // matching flat command.
+        fn _exhaustive(command: ToolsCommand) -> Commands {
+            super::flatten(command)
+        }
     }
 }
