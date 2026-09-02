@@ -46,8 +46,11 @@ pub fn maybe_check(disabled_by_flag: bool, force_refresh: bool) {
 /// Update the binary only when there is actually something newer, staying
 /// silent otherwise. `tt update` calls this before updating tools, so one
 /// command makes the whole installation current.
+///
+/// Forces a fresh check: someone typing `tt update` is asking us to look now,
+/// not to consult a cache that may be up to a day old.
 pub fn update_self_if_newer() {
-    let _ = check_for_update(false);
+    let _ = check_for_update(true);
 }
 
 pub fn run() -> Result<()> {
