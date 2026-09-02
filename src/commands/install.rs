@@ -87,26 +87,35 @@ pub fn run(registry: &Registry, request: &Request) -> Result<()> {
 /// The whole point of `next_steps`: after installing, say the one thing to do,
 /// not the tool's entire manual. The manual is one command away.
 fn print_next_steps(installed: &[&EmbeddedTool]) {
-    if installed.is_empty() {
+    let steps: Vec<(&str, &str)> = installed
+        .iter()
+        .filter_map(|tool| {
+            tool.definition
+                .next_steps
+                .as_deref()
+                .map(|next| (tool.definition.id.as_str(), next))
+        })
+        .collect();
+
+    if steps.is_empty() {
         return;
     }
 
+    let id_width = steps.iter().map(|(id, _)| id.len()).max().unwrap_or(0);
+    let room = ui::width().saturating_sub(id_width + 5);
+
     println!();
-    for tool in installed {
-        if let Some(next) = &tool.definition.next_steps {
-            println!("  {} {}", ui::tool_id(&tool.definition.id), next);
-        }
+    println!("  {}", ui::heading("Next steps"));
+    for (id, next) in steps {
+        println!(
+            "    {:<id_width$}  {}",
+            ui::tool_id(id),
+            ui::truncate(next, room)
+        );
     }
 
-    let ids: Vec<&str> = installed
-        .iter()
-        .map(|tool| tool.definition.id.as_str())
-        .collect();
     println!();
-    println!(
-        "  {}",
-        ui::dim(&format!("Full docs: tt usage {}", ids.join(" ")))
-    );
+    println!("  {}", ui::dim("Full docs: tt usage <tool>"));
 }
 
 fn resolve(registry: &Registry, request: &Request) -> Result<Vec<String>> {

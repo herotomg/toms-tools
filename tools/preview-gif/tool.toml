@@ -1,8 +1,8 @@
 id = "preview-gif"
 name = "Preview GIF"
 description = "Record preview GIFs of a UI with a visible cursor and visible clicks, for a README or PR."
-version = "2"
-next_steps = "Ask Claude Code for a preview GIF, or run `screengif --list` to see what you can record."
+version = "3"
+next_steps = "Ask Claude Code for a preview GIF, or run `screengif --list`."
 
 installs = [
   "~/.local/bin/screengif",

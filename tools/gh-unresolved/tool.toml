@@ -1,8 +1,8 @@
 id = "gh-unresolved"
 name = "gh unresolved"
 description = "A `gh unresolved` command that lists unresolved review comments on a PR."
-version = "4"
-next_steps = "On a PR branch, run `gh unresolved` (or `gh unresolved 123` for a specific PR)."
+version = "5"
+next_steps = "On a PR branch, run `gh unresolved` to list open review threads."
 
 # A gh alias is not a file, so this cannot be expressed as `installs` paths.
 status_check = "gh alias list 2>/dev/null | awk '/^unresolved:/{found=1; next} found && /^[^[:space:]].*:/{exit} found{print}' | grep -Fq '\"Unknown\"'"

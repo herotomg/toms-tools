@@ -310,6 +310,28 @@ mod registry_tests {
         }
     }
 
+    /// `next_steps` is printed as one aligned line after an install. Anything
+    /// much longer than this is truncated, which means the useful half is lost.
+    #[test]
+    fn next_steps_fit_on_one_line() {
+        for tool in registry().tools() {
+            let Some(next) = &tool.definition.next_steps else {
+                continue;
+            };
+            assert!(
+                next.chars().count() <= 72,
+                "{}: next_steps is {} chars, keep it under 72",
+                tool.definition.id,
+                next.chars().count()
+            );
+            assert!(
+                !next.contains('\n'),
+                "{}: next_steps must be a single line",
+                tool.definition.id
+            );
+        }
+    }
+
     #[test]
     fn every_tool_can_report_whether_it_is_installed() {
         for tool in registry().tools() {
