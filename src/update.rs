@@ -22,7 +22,9 @@ const EMBEDDED_INSTALLER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR")
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UpdateCache {
     checked_at: u64,
-    latest: String,
+    /// `None` means "we checked and came back empty" — an unreachable network,
+    /// usually. It is still a real result: it stops us probing again for a day.
+    latest: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,25 +69,32 @@ fn latest_release_for_update(
     force_refresh: bool,
     fetch_latest: impl FnOnce() -> Option<String>,
 ) -> Option<String> {
+    let cached = read_cache(cache_path);
+
     if !force_refresh {
-        if let Some(cache) = read_cache_if_fresh(cache_path, now) {
-            return Some(cache.latest);
+        if let Some(cache) = cached
+            .as_ref()
+            .filter(|cache| is_cache_fresh(now, cache.checked_at))
+        {
+            return cache.latest.clone();
         }
     }
 
-    let latest = fetch_latest()?;
-    let cache = UpdateCache {
-        checked_at: now,
-        latest: latest.clone(),
-    };
+    // Record the attempt whether or not it succeeded. Without this an offline
+    // machine re-probes the network — and pays the timeout — on every single
+    // command, forever. A previously-known version survives a failed probe: it
+    // was true yesterday, and all the failure tells us is that GitHub was
+    // unreachable just now.
+    let latest = fetch_latest().or_else(|| cached.and_then(|cache| cache.latest));
+    let _ = write_cache(
+        cache_path,
+        &UpdateCache {
+            checked_at: now,
+            latest: latest.clone(),
+        },
+    );
 
-    let _ = write_cache(cache_path, &cache);
-    Some(latest)
-}
-
-fn read_cache_if_fresh(path: &Path, now: u64) -> Option<UpdateCache> {
-    let cache = read_cache(path)?;
-    is_cache_fresh(now, cache.checked_at).then_some(cache)
+    latest
 }
 
 fn read_cache(path: &Path) -> Option<UpdateCache> {
@@ -98,10 +107,13 @@ fn write_cache(path: &Path, cache: &UpdateCache) -> Result<(), std::io::Error> {
         fs::create_dir_all(parent)?;
     }
 
+    let latest = match &cache.latest {
+        Some(latest) => format!("\"{}\"", escape_json_string(latest)),
+        None => "null".to_owned(),
+    };
     let content = format!(
-        "{{\"checked_at\":{},\"latest\":\"{}\"}}\n",
-        cache.checked_at,
-        escape_json_string(&cache.latest)
+        "{{\"checked_at\":{},\"latest\":{latest}}}\n",
+        cache.checked_at
     );
     fs::write(path, content)
 }
@@ -357,7 +369,7 @@ fn normalize_version(version: &str) -> Option<&str> {
 fn parse_cache(content: &str) -> Option<UpdateCache> {
     Some(UpdateCache {
         checked_at: parse_json_u64(content, "checked_at")?,
-        latest: parse_json_string(content, "latest")?,
+        latest: parse_json_string(content, "latest"),
     })
 }
 
@@ -420,17 +432,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cache_round_trips() {
-        let cache = UpdateCache {
-            checked_at: 1_700_000_000,
-            latest: "1.2.3-beta.1".to_owned(),
-        };
-        let content = format!(
-            "{{\"checked_at\":{},\"latest\":\"{}\"}}",
-            cache.checked_at, cache.latest
-        );
+    fn cache_round_trips_through_the_file() {
+        let path = test_cache_path("cache_round_trips");
 
-        assert_eq!(parse_cache(&content), Some(cache));
+        for cache in [
+            UpdateCache {
+                checked_at: 1_700_000_000,
+                latest: Some("1.2.3-beta.1".to_owned()),
+            },
+            UpdateCache {
+                checked_at: 1_700_000_000,
+                latest: None,
+            },
+        ] {
+            write_cache(&path, &cache).unwrap();
+            assert_eq!(read_cache(&path), Some(cache));
+        }
+
+        cleanup_test_cache(&path);
+    }
+
+    #[test]
+    fn a_cache_written_before_null_support_still_parses() {
+        assert_eq!(
+            parse_cache("{\"checked_at\":7,\"latest\":\"1.2.3\"}"),
+            Some(UpdateCache {
+                checked_at: 7,
+                latest: Some("1.2.3".to_owned()),
+            })
+        );
     }
 
     #[test]
@@ -501,15 +531,23 @@ mod tests {
     }
 
     #[test]
-    fn fetch_failure_leaves_existing_cache_alone() {
-        let path = test_cache_path("fetch_failure_leaves_existing_cache_alone");
-        let original = "{\"checked_at\":1,\"latest\":\"8.8.8\"}\n";
-        fs::write(&path, original).unwrap();
+    fn fetch_failure_keeps_the_version_it_already_knew() {
+        let path = test_cache_path("fetch_failure_keeps_the_version_it_already_knew");
+        fs::write(&path, "{\"checked_at\":1,\"latest\":\"8.8.8\"}\n").unwrap();
 
-        let latest = latest_release_for_update(&path, CACHE_MAX_AGE_SECS + 1, false, || None);
+        let now = CACHE_MAX_AGE_SECS + 1;
+        let latest = latest_release_for_update(&path, now, false, || None);
 
-        assert_eq!(latest, None);
-        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        // The probe failed, but 8.8.8 was real yesterday and still is.
+        assert_eq!(latest, Some("8.8.8".to_owned()));
+        // And the attempt is recorded, so we back off instead of retrying.
+        assert_eq!(
+            read_cache(&path),
+            Some(UpdateCache {
+                checked_at: now,
+                latest: Some("8.8.8".to_owned()),
+            })
+        );
         cleanup_test_cache(&path);
     }
 
@@ -525,21 +563,55 @@ mod tests {
             read_cache(&path),
             Some(UpdateCache {
                 checked_at: 1_700_000_123,
-                latest: "9.9.9".to_owned(),
+                latest: Some("9.9.9".to_owned()),
             })
         );
         cleanup_test_cache(&path);
     }
 
     #[test]
-    fn fetch_failure_does_not_poison_empty_cache_with_current_version() {
-        let path =
-            test_cache_path("fetch_failure_does_not_poison_empty_cache_with_current_version");
+    fn fetch_failure_records_the_attempt_without_inventing_a_version() {
+        let path = test_cache_path("fetch_failure_records_the_attempt");
 
         let latest = latest_release_for_update(&path, 1_700_000_123, false, || None);
 
         assert_eq!(latest, None);
-        assert!(!path.exists());
+        assert_eq!(
+            read_cache(&path),
+            Some(UpdateCache {
+                checked_at: 1_700_000_123,
+                latest: None,
+            })
+        );
+        cleanup_test_cache(&path);
+    }
+
+    /// The reason negative caching exists: an offline machine used to pay the
+    /// network timeout on every command because a failed probe wrote nothing.
+    #[test]
+    fn a_failed_probe_is_not_retried_until_the_cache_expires() {
+        let path = test_cache_path("a_failed_probe_is_not_retried");
+        let calls = std::cell::Cell::new(0);
+        let probe = || {
+            calls.set(calls.get() + 1);
+            None
+        };
+
+        assert_eq!(latest_release_for_update(&path, 1_000, false, probe), None);
+        assert_eq!(calls.get(), 1);
+
+        // Same day: no second probe.
+        assert_eq!(latest_release_for_update(&path, 1_001, false, probe), None);
+        assert_eq!(calls.get(), 1);
+
+        // A day later it is allowed to try again.
+        let tomorrow = 1_000 + CACHE_MAX_AGE_SECS;
+        assert_eq!(
+            latest_release_for_update(&path, tomorrow, false, probe),
+            None
+        );
+        assert_eq!(calls.get(), 2);
+
         cleanup_test_cache(&path);
     }
 
@@ -551,7 +623,7 @@ mod tests {
         let latest = latest_release_for_update(&path, 101, true, || Some("2.0.0".to_owned()));
 
         assert_eq!(latest, Some("2.0.0".to_owned()));
-        assert_eq!(read_cache(&path).unwrap().latest, "2.0.0");
+        assert_eq!(read_cache(&path).unwrap().latest, Some("2.0.0".to_owned()));
         cleanup_test_cache(&path);
     }
 
