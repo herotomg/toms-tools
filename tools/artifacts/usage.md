@@ -12,6 +12,20 @@ https://your-laptop.tailnet-name.ts.net:8443/q3-threat-model/
 
 Requires [uv](https://astral.sh/uv) and Tailscale.
 
+## How it works
+
+There is no server to run in the `dir` backend: `tailscale serve` publishes a
+local directory over HTTPS and tailscaled handles TLS, auth and static files.
+"Publishing" is writing into that directory.
+
+```text
+~/.local/share/artifacts/
+├── index.html                   gallery, rebuilt on every publish
+├── _assets/                     base.css, code.css, topbar.*, comments.*
+├── _comments/<slug>.json        threads, kept outside the page
+└── <slug>/index.html + meta.json
+```
+
 ## What it installs
 
 - `~/.local/bin/art` — symlink to the CLI.
@@ -70,11 +84,24 @@ already sent — the property that makes the link worth sending.
 - **`artifact-design`** — the substantive one. Calibrates how much design a page
   warrants, then hands over `template.html` and the shared token set.
 
+Both are plain directories with a `SKILL.md`, symlinked into every host found so
+editing one takes effect in both at once. Set `ART_SKILL_DIR` (Claude) or
+`CODEX_HOME` (Codex) to override, or to install for a host not present yet; for
+any other harness, symlink the payload's `skills/*` wherever it looks.
+
 Verify Codex picked them up:
 
 ```sh
 codex debug prompt-input | grep -o 'publish-artifact\|artifact-design'
 ```
+
+## The header
+
+Every artifact gets a sticky header — back to the gallery, the title, when it was
+last updated, and **Share**, which copies the link. It is injected at serve time
+from `meta.json`, so hand-authored pages get it too and it cannot go stale.
+Opening a thread writes `?comment=<id>` into the URL, so sharing with a thread
+open hands over a link that opens on that comment.
 
 ## Comments
 
@@ -86,11 +113,36 @@ Threads are keyed to a quoted passage plus surrounding context, not a DOM
 position, so they survive republishing. When the quoted text is genuinely gone
 the thread moves to the top of the rail labelled *text no longer on the page*.
 
+Asset URLs are stamped with each file's mtime, so editing `base.css` reaches
+readers on their next load rather than when a cache lapses. Also included:
+threaded replies, resolve/reopen, live updates over SSE, drafts in
+`localStorage`, and `⌘↵` to post.
+
+`art comments off <slug>` means the widget is not injected **and** the API
+refuses writes for that slug — not merely hidden. Existing threads are kept and
+return if you turn it back on, and republishing does not silently re-enable it.
+
+## Authoring pages
+
+Markdown goes through the same design system as hand-authored HTML, so publish
+Markdown unless you need layout it cannot express. Fenced `mermaid` blocks become
+diagrams, and Python-Markdown's `admonition`, `attr_list`, `toc` and table
+extensions are all on.
+
+For HTML, start from the `artifact-design` skill's `template.html` and link
+`/_assets/base.css` rather than writing your own styles. There is no CSP, so
+external scripts, relative assets and shared files under `/_assets/` all work —
+the main thing this has over hosted artifacts.
+
 ## Limits, stated plainly
 
 - The URL resolves **only for people on the same tailnet**, and only while this
   machine is awake and online. Not public, not durable.
 - Nothing is access-controlled beyond tailnet membership. Anyone on the tailnet
   can read any artifact — do not publish secrets or customer data.
+- Reachability depends on your tailnet ACLs. If your policy restricts ports,
+  teammates may not reach `:8443` on your node — test with one person first.
+- Exposing an artifact to the public internet is not automated: `art public`
+  deliberately refuses, so `tailscale funnel` stays something you type yourself.
 - For something durable, run the same store and `tailscale serve` on an always-on
   host. Nothing else changes.
