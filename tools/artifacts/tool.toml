@@ -1,7 +1,7 @@
 id = "artifacts"
 name = "Artifacts"
 description = "Publish Markdown or HTML to your tailnet as a page teammates can read and comment on."
-version = "4"
+version = "5"
 next_steps = "Run `art serve` once, then `art publish notes.md`."
 
 installs = [

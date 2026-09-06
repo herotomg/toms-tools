@@ -20,7 +20,8 @@
   --danger-bg: #fbeeee;
   --code-bg:   #f4f1ec;
   --radius:    10px;
-  --measure:   68ch;
+  --measure:   72ch;   /* the text column itself — .wrap padding sits outside it */
+  --wide:      1240px;
   --font: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Inter, system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
@@ -59,13 +60,20 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 16px/1.65 var(--font);
+  font: 17px/1.68 var(--font);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-.wrap { max-width: var(--measure); margin: 0 auto; padding: 4rem 1.5rem 6rem; }
-.wrap.wide { max-width: 1100px; }
+.wrap { max-width: calc(var(--measure) + 3rem); margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+.wrap.wide { max-width: var(--wide); }
+
+/* One wide thing inside a reading-measure page: a table, a diagram, a KPI row.
+   Centres on the page instead of scrolling inside the column. */
+.bleed {
+  width: min(var(--wide), 100vw - 4rem);
+  margin-inline: calc(50% - min(var(--wide), 100vw - 4rem) / 2);
+}
 
 /* ---- typography ---- */
 h1, h2, h3, h4 { line-height: 1.25; font-weight: 650; letter-spacing: -0.011em; }
@@ -183,6 +191,7 @@ pre.mermaid { background: none; border: 0; text-align: center; }
 @media (max-width: 640px) {
   .wrap { padding: 2.5rem 1.15rem 4rem; }
   h1 { font-size: 1.7rem; }
+  .bleed { width: auto; margin-inline: 0; }   /* nothing to escape from */
 }
 
 @media print {

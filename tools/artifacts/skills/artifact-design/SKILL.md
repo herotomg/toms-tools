@@ -17,7 +17,7 @@ as under-designing a launch page.
 |---|---|---|
 | **Plain** | notes, a dump, something read once | Write Markdown and `art publish` it. No HTML. |
 | **Document** | most things — memos, reports, runbooks, proposals | `template.html`, prose, maybe one table or callout |
-| **Composed** | a deliverable with an audience; a dashboard | Document + a real layout: KPI row, card grid, one diagram |
+| **Composed** | a deliverable with an audience; a dashboard | Document + a real layout on `.wrap.wide`: KPI row, card grid, one diagram |
 | **Designed** | a launch page, something representing the team | Composed + a considered hero, deliberate rhythm, custom accents |
 
 If Markdown would serve, say so and publish Markdown. `art publish notes.md`
@@ -48,8 +48,13 @@ what is genuinely specific to this page.
 `var(--surface)`, `var(--border)`. A hardcoded hex is a page that looks broken in
 one of the two themes — and you will only ever test one of them.
 
-**Structure.** `<main class="wrap">` gives a ~68ch reading measure. Add
-`.wide` for dashboards and wide tables. One `<h1>`. `<h2>` for real sections.
+**Structure.** `<main class="wrap">` is a ~72ch column: right for a page that is
+paragraphs. It is the wrong default for anything else, and a cramped page is the
+most common way an artifact fails. Add `.wide` — a 1240px canvas — as soon as the
+page has a table with more than three columns, a KPI row, a card grid, a diagram,
+or wide code. For a prose page with one wide thing in it, keep `.wrap` and put
+`.bleed` on that one element: it centres at full width instead of scrolling inside
+the column. One `<h1>`. `<h2>` for real sections.
 
 **Assets are shared and relative.** Unlike hosted artifacts there is no CSP here:
 put an image next to the page with `art publish page.html --asset diagram.png`
@@ -84,7 +89,8 @@ column. `.kpi .n` already has it.
 ## Do not
 
 - Do not use a hex color where a token exists.
-- Do not let the body scroll horizontally — wide things scroll inside themselves.
+- Do not let the body scroll horizontally — but do not leave a wide table
+  scrolling inside a narrow column either. Widen the page or `.bleed` the table.
 - Do not add a theme toggle. The page follows the OS; `base.css` handles it.
 - Do not add JS for something CSS does, or a framework for a document.
 - Do not invent a title like "Q3 Threat Model — A Comprehensive Analysis".

@@ -23,12 +23,14 @@
      that has a token, or the page breaks in one of the two themes.
      Available: --bg --surface --fg --muted --border --border-str --accent
                 --accent-bg --ok --ok-bg --warn --warn-bg --danger --danger-bg
-                --code-bg --radius --measure --font --mono */
+                --code-bg --radius --measure --wide --font --mono */
 </style>
 </head>
 
 <body>
-<!-- .wrap = reading measure (~68ch). Add .wide for dashboards and wide tables. -->
+<!-- .wrap = ~72ch reading column, for a page that is mostly paragraphs.
+     Use <main class="wrap wide"> (1240px) the moment the page carries a KPI row,
+     a card grid, a diagram, or a table wider than three columns. -->
 <main class="wrap">
 
   <h1>Q3 Threat Model</h1>
@@ -51,7 +53,8 @@
     <p>Say the thing that would change the conclusion if it were wrong.</p>
   </div>
 
-  <!-- Tables scroll inside themselves; the page body never scrolls sideways. -->
+  <!-- Fits the column, so it stays in it. A table with more columns than this
+       gets class="bleed" (centres at full width) or the page gets .wide. -->
   <table>
     <thead><tr><th>Risk</th><th>Likelihood</th><th>Owner</th></tr></thead>
     <tbody>
