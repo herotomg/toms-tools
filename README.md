@@ -58,6 +58,8 @@ this table is deliberately not a second copy of them.
 
 - **`artifacts`** — publish Markdown or HTML to your tailnet as a page teammates
   can read and comment on. Bundles the `art` CLI and two agent skills.
+- **`claude-artifacts`** — turns on Claude's native Artifact tool for every
+  Claude session Paseo starts, by setting one provider env var.
 - **`paseo-defer`** — a Paseo plugin that queues a message to an agent for
   later, or for when your usage window resets.
 - **`send-to-paseo`** — start a Paseo agent on the pull request you are looking

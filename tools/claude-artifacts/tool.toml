@@ -1,0 +1,24 @@
+id = "claude-artifacts"
+name = "Claude Artifacts"
+description = "Give every Claude session Paseo starts the native Artifact tool."
+version = "1"
+next_steps = "Start a new Claude session in Paseo (or reload a running one) to get the Artifact tool."
+
+# The setting lives in Paseo's own config, under the Claude provider's env, so
+# there is no path of ours whose presence means "installed". Reading the file
+# directly keeps `tt` and `tt list` off the daemon.
+status_check = '''jq -e '.agents.providers.claude.env.CLAUDE_CODE_ARTIFACT == "1"' "${PASEO_HOME:-$HOME/.paseo}/config.json" >/dev/null 2>&1'''
+
+# Written only when install.sh is the one that turned the flag on. uninstall.sh
+# reads it first; tt deletes it afterwards.
+cleans = ["~/.local/share/toms-tools/claude-artifacts"]
+
+[[requires]]
+command = "paseo"
+fix = "brew install --cask paseo"
+why = "starts the Claude sessions and holds the provider environment"
+
+[[requires]]
+command = "jq"
+fix = "brew install jq"
+why = "merges the flag into the existing provider config"
