@@ -248,8 +248,11 @@ mod next_steps_tests {
 #[cfg(test)]
 mod registry_tests {
     use std::{
+        fs,
         io::Write,
+        path::Path,
         process::{Command, Stdio},
+        time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::{deps, Registry};
@@ -280,6 +283,89 @@ mod registry_tests {
         } else {
             Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
         }
+    }
+
+    /// Run a bundled paseo-defer hook against fake `paseo` and `curl` binaries.
+    /// This exercises the release-pinning shell code without reaching the real
+    /// daemon or GitHub, either of which would make the registry test flaky.
+    fn run_paseo_defer(
+        script_name: &str,
+        config: Option<&str>,
+        sources: Option<&str>,
+        latest_tag: &str,
+    ) -> (String, String, String) {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("toms-tools-paseo-defer-{nonce}"));
+        let bin = root.join("bin");
+        let paseo_home = root.join("paseo-home");
+        let log = root.join("paseo.log");
+        fs::create_dir_all(&bin).expect("fake bin directory");
+        fs::create_dir_all(paseo_home.join("plugins")).expect("fake plugin directory");
+
+        let write_executable = |path: &Path, body: &str| {
+            fs::write(path, body).expect("write fake executable");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut permissions = fs::metadata(path)
+                    .expect("executable metadata")
+                    .permissions();
+                permissions.set_mode(0o755);
+                fs::set_permissions(path, permissions).expect("make fake executable runnable");
+            }
+        };
+        write_executable(
+            &bin.join("paseo"),
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$TEST_PASEO_LOG\"\n",
+        );
+        write_executable(
+            &bin.join("curl"),
+            &format!("#!/usr/bin/env bash\nprintf '%s' 'https://github.com/tomgrin10/paseo-defer/releases/tag/{latest_tag}'\n"),
+        );
+        if let Some(contents) = config {
+            fs::write(paseo_home.join("config.json"), contents).expect("write fake config");
+        }
+        if let Some(contents) = sources {
+            fs::write(paseo_home.join("plugins/sources.json"), contents)
+                .expect("write fake sources");
+        }
+
+        let bundled = registry();
+        let tool = bundled.get("paseo-defer").expect("paseo-defer is bundled");
+        let script = tool
+            .dir()
+            .get_file(tool.dir().path().join(script_name))
+            .expect("paseo-defer hook is bundled");
+        let script_path = root.join(script_name);
+        fs::write(&script_path, script.contents()).expect("write bundled hook");
+
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").expect("PATH is set")
+        );
+        let output = Command::new(which::which("bash").expect("bash is installed"))
+            .arg(&script_path)
+            .current_dir(&root)
+            .env("PATH", path)
+            .env("PASEO_HOME", &paseo_home)
+            .env("TEST_PASEO_LOG", &log)
+            .output()
+            .expect("run paseo-defer hook");
+        assert!(
+            output.status.success(),
+            "{script_name} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let calls = fs::read_to_string(&log).unwrap_or_default();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        fs::remove_dir_all(&root).expect("remove test fixture");
+        (calls, stdout, stderr)
     }
 
     #[test]
@@ -543,5 +629,49 @@ mod registry_tests {
                 tool.id
             );
         }
+    }
+
+    #[test]
+    fn paseo_defer_recognises_a_compact_sources_file_and_never_reinstalls_a_matching_tag() {
+        let (calls, _stdout, stderr) = run_paseo_defer(
+            "install.sh",
+            Some(r#"{"plugins":{"paseo-defer":{"source":"directory"}}}"#),
+            Some(r#"{"paseo-defer":{"requestedRef":"v1.2.3","repo":"tomgrin10/paseo-defer"}}"#),
+            "v1.2.3",
+        );
+
+        assert!(
+            calls.is_empty(),
+            "a matching pinned release must not be changed: {calls}"
+        );
+        assert!(stderr.contains("already pinned to v1.2.3"));
+    }
+
+    #[test]
+    fn paseo_defer_never_replaces_a_configured_local_checkout() {
+        let (calls, _stdout, stderr) = run_paseo_defer(
+            "install.sh",
+            Some(r#"{"plugins":{"paseo-defer":{"source":"directory"}}}"#),
+            None,
+            "v1.2.3",
+        );
+
+        assert!(
+            calls.is_empty(),
+            "a local checkout must be left untouched: {calls}"
+        );
+        assert!(stderr.contains("installed from a local checkout, so it was left alone"));
+    }
+
+    #[test]
+    fn paseo_defer_update_check_reports_only_a_newer_pinned_release() {
+        let (_calls, output, _stderr) = run_paseo_defer(
+            "update-check.sh",
+            None,
+            Some(r#"{"paseo-defer":{"requestedRef":"v1.2.3"}}"#),
+            "v1.2.4",
+        );
+
+        assert_eq!(output, "v1.2.3 → v1.2.4\n");
     }
 }
