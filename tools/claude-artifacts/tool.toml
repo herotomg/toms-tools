@@ -2,7 +2,7 @@ id = "claude-artifacts"
 name = "Claude Artifacts"
 description = "Give every Claude session Paseo starts the native Artifact tool."
 version = "1"
-next_steps = "Start a new Claude session in Paseo (or reload a running one) to get the Artifact tool."
+next_steps = "Start or reload a Claude session in Paseo to get the Artifact tool."
 
 # The setting lives in Paseo's own config, under the Claude provider's env, so
 # there is no path of ours whose presence means "installed". Reading the file

@@ -71,6 +71,9 @@
 - `include_dir!` embeds `tools/` at **compile time**. Editing an `install.sh`
   and then running `./target/debug/tt` without rebuilding runs the *old* script.
   Always `cargo build` before testing a tool script through the binary.
+  Cargo does not notice a *new* file under `tools/` either, so the registry
+  tests can pass against the old tool set: `touch src/main.rs` before
+  `cargo test` after adding or renaming a tool file.
 - The installer extracts embedded files **without their mode bits**, so an
   `install.sh` that ships a binary must `chmod +x` it. The extraction directory
   is deleted afterwards, so copy payloads somewhere permanent —
