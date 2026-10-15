@@ -20,15 +20,15 @@ $ tt
   tt v0.1.23 · 6 of 7 tools installed
 
   Installed, but missing something
-    artifacts
-      uv not found — runs the art CLI
-      brew install uv
+    preview-gif
+      gifski not found — encodes the GIF
+      brew install gifski
 
   Not installed
     ○ gh-unresolved    A `gh unresolved` command that lists unresolved review comments…
 
   ? What would you like to do? ›
-  ❯ Run `brew install uv` to fix what is missing
+  ❯ Run `brew install gifski` to fix what is missing
     Install the 1 tool I do not have
     Show me what my tools do
     Nothing right now
@@ -56,8 +56,6 @@ Everything below is a shortcut for something that menu already offers.
 Descriptions live in each `tools/<id>/tool.toml` and are printed by `tt list` —
 this table is deliberately not a second copy of them.
 
-- **`artifacts`** — publish Markdown or HTML to your tailnet as a page teammates
-  can read and comment on. Bundles the `art` CLI and two agent skills.
 - **`claude-artifacts`** — turns on Claude's native Artifact tool for every
   Claude session Paseo starts, by setting one provider env var.
 - **`paseo-defer`** — a Paseo plugin that queues a message to an agent for
@@ -78,7 +76,7 @@ this table is deliberately not a second copy of them.
 
 | | |
 |---|---|
-| `~/.local/bin/` | binaries (`art`, `screengif`), symlinked |
+| `~/.local/bin/` | binaries (`screengif`), symlinked |
 | `~/.local/share/toms-tools/<id>/` | each tool's payload |
 | `~/.local/share/toms-tools/installed.toml` | recorded versions |
 | `~/.local/share/toms-tools/backups/` | anything replaced during an install |

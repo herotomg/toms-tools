@@ -118,8 +118,8 @@ mod tests {
     #[test]
     fn a_single_id_is_requested_directly() {
         assert!(matches!(
-            Request::from_args(vec!["artifacts".to_owned()], false),
-            Request::Ids(ids) if ids == vec!["artifacts".to_owned()]
+            Request::from_args(vec!["preview-gif".to_owned()], false),
+            Request::Ids(ids) if ids == vec!["preview-gif".to_owned()]
         ));
     }
 }

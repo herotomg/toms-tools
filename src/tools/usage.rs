@@ -36,7 +36,7 @@ pub fn render_card(tool: &EmbeddedTool, status: Status) -> Result<String> {
 
 fn render(markdown: &str, id: &str, status: Status, is_terminal: bool, width: usize) -> String {
     // Piped or redirected: hand back the source Markdown untouched. It is
-    // already a good document, and `tt usage artifacts > notes.md` should
+    // already a good document, and `tt usage preview-gif > notes.md` should
     // produce one rather than a de-styled approximation.
     if !is_terminal {
         return ensure_trailing_newline(markdown.to_owned());
